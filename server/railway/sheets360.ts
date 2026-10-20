@@ -4,7 +4,7 @@ import type { PrivateR2Bucket } from '../../worker/index.js';
 import type { Client, Snapshot, RecordKind } from '../../src/types.js';
 import type { PilotResponse, PilotDossier, PilotField, PilotSource } from '../../shared/pilot-contract.js';
 
-export interface SheetTable { key: string; id: string; tab: string; gid: number; values: string[][]; }
+export interface SheetTable { key: string; id: string; tab: string; gid: number; values: string[][]; historicalAt?:string; }
 export interface SheetsCapture { schemaVersion: 'sheets-tables-1'; readAt: string; tables: SheetTable[]; }
 const prefix = 'vds/private/sheets360/';
 const hash = (s: string) => createHash('sha256').update(s).digest('hex');
@@ -32,7 +32,7 @@ function validateCapture(value: unknown): SheetsCapture {
   return x;
 }
 export function createSheets360Store(bucket: PrivateR2Bucket, env: NodeJS.ProcessEnv) {
-  let cache: {captures: SheetsCapture[]; digests: string[]; received: Record<string,{at:string;mode:string}>} | null=null;
+  let cache: {captures: SheetsCapture[]; historyCaptures:SheetsCapture[]; digests: string[]; received: Record<string,{at:string;mode:string}>} | null=null;
   let queue=Promise.resolve<unknown>(undefined);
   async function json(key:string){const o=await bucket.get(prefix+key);return o?JSON.parse(await o.text()):null;}
   async function state(){
@@ -42,7 +42,10 @@ export function createSheets360Store(bucket: PrivateR2Bucket, env: NodeJS.Proces
     if(cache && JSON.stringify(cache.digests)===JSON.stringify(digests))return {...cache,received:Object.fromEntries(entries.map(([k,v])=>[k,v]))};
     const captures:SheetsCapture[]=[];
     for(const digest of digests){if(!/^[a-f0-9]{64}$/.test(digest))throw Error('invalid_source_digest'); const obj=await json(`versions/${digest}.json`); if(!obj||hash(JSON.stringify(obj))!==digest)throw Error('invalid_source_version'); captures.push(validateCapture(obj));}
-    return cache={captures,digests,received:Object.fromEntries(entries.map(([k,v])=>[k,v]))};
+    const historyCaptures:SheetsCapture[]=[];
+    const historical=[...new Set(Object.values(index.sources).flatMap((v:any)=>v.history??[]))] as string[];
+    for(const digest of historical){if(!/^[a-f0-9]{64}$/.test(digest))throw Error('invalid_source_digest');const value=await json(`versions/${digest}.json`);if(!value||hash(JSON.stringify(value))!==digest)throw Error('invalid_source_version');historyCaptures.push(validateCapture(value));}
+    return cache={captures,historyCaptures,digests,received:Object.fromEntries(entries.map(([k,v])=>[k,v]))};
   }
   async function save(capture:SheetsCapture,mode:'manual'|'push'){
     const work=queue.then(async()=>{
@@ -62,10 +65,10 @@ export function createSheets360Store(bucket: PrivateR2Bucket, env: NodeJS.Proces
         }
         // Store changed source versions immutably; unchanged heartbeats update metadata only.
         const contentHash=hash(JSON.stringify(tables));
-        if(prev?.contentHash===contentHash){index.sources[id]={...prev,at:capture.readAt,mode};continue;}
+        if(prev?.contentHash===contentHash){index.sources[id]={...prev,at:capture.readAt,sourceReadAt:capture.readAt,mode};continue;}
         const obj={schemaVersion:'sheets-tables-1',readAt:capture.readAt,tables};const body=JSON.stringify(obj),digest=hash(body);
         await bucket.put(prefix+`versions/${digest}.json`,body,{onlyIf:{etagDoesNotMatch:'*'}});
-        index.sources[id]={digest,contentHash,at:capture.readAt,mode};
+        index.sources[id]={digest,contentHash,at:capture.readAt,sourceReadAt:capture.readAt,mode,history:[...new Set([...(prev?.history??[]),...(prev?[prev.digest]:[])])]};
       }
       await bucket.put(prefix+'index.json',JSON.stringify(index));cache=null;
       return {accepted:true,sourceCount:grouped.size,sourceWrites:0,versions:Object.fromEntries([...grouped.keys()].map(id=>[id,index.sources[id].digest]))};
@@ -73,6 +76,10 @@ export function createSheets360Store(bucket: PrivateR2Bucket, env: NodeJS.Proces
   }
   return {
     state,
+    async requestRefresh(){const at=new Date().toISOString();await bucket.put(prefix+'refresh-request.json',JSON.stringify({at}));return {requestedAt:at};},
+    async refreshStatus(){return json('refresh-request.json');},
+    async history(){const index=await json('index.json')??{sources:{}};return Object.entries(index.sources).map(([id,v]:[string,any])=>({id,current:v.digest,previous:v.history??[]}));},
+    async version(digest:string){if(!/^[a-f0-9]{64}$/.test(digest))return null;const index=await json('index.json')??{sources:{}};if(!Object.values(index.sources).some((v:any)=>v.digest===digest||(v.history??[]).includes(digest)))return null;return json(`versions/${digest}.json`);},
     async bootstrap(){
       const n=Number(env.VDS_SHEETS_BOOTSTRAP_CHUNKS||0);if(!n)return;
       if(!Number.isInteger(n)||n<1||n>180)throw Error('invalid_sheets_bootstrap');
@@ -102,7 +109,7 @@ export function createSheets360Store(bucket: PrivateR2Bucket, env: NodeJS.Proces
           const work=queue.then(async()=>{const index=await json('index.json');if(!index)throw Error('source_missing');
             for(const v of input.versions){const prior=index.sources[v.id];if(!prior||v.digest!==prior.digest||Number(time)<Date.parse(prior.at))throw Error('source_revision_changed');}
             for(const v of input.versions)index.sources[v.id]={...index.sources[v.id],at:new Date(Number(time)).toISOString(),mode:'push'};
-            await bucket.put(prefix+'index.json',JSON.stringify(index));return {accepted:true,sourceWrites:0};});queue=work.catch(()=>{});return Response.json(await work);
+            await bucket.put(prefix+'index.json',JSON.stringify(index));const requested=await json('refresh-request.json');let refreshRequested=false;if(requested)for(const v of Object.values(index.sources) as any[]){const readAt=v.sourceReadAt||(await json(`versions/${v.digest}.json`))?.readAt;if(!readAt||Date.parse(readAt)<=Date.parse(requested.at))refreshRequested=true;}return {accepted:true,sourceWrites:0,refreshRequested};});queue=work.catch(()=>{});return Response.json(await work);
         }
         const capture=validateCapture(input);if(Math.abs(Date.parse(capture.readAt)-Number(time))>300000)throw Error('capture_timestamp_invalid');
         const result=await save(capture,'push');return Response.json(result);
@@ -112,15 +119,24 @@ export function createSheets360Store(bucket: PrivateR2Bucket, env: NodeJS.Proces
 }
 function headerIndex(t:SheetTable){return ['clients','sav'].includes(t.key)||t.tab==='Cockpit_Priorites'?3:0;}
 export interface RowObservation {table:SheetTable; row:number; values:Record<string,string>; sourceId:string;}
-export function buildSheetIndex(captures:SheetsCapture[],baseline:Snapshot){
-  const tables=captures.flatMap(c=>c.tables), clients=new Map(baseline.clients.map(c=>[c.id,{...c}]));
+export function buildSheetIndex(captures:SheetsCapture[],baseline:Snapshot,historyCaptures:SheetsCapture[]=[]){
+  const latest=captures.flatMap(c=>c.tables);
+  const historical:SheetTable[]=[];
+  for(const capture of historyCaptures)for(const old of capture.tables){const current=latest.find(t=>t.id===old.id&&t.tab===old.tab);if(!current)continue;
+    const h=headerIndex(old),headers=old.values[h]??[],nowHeaders=current.values[headerIndex(current)]??[];
+    const rowKey=(r:string[])=>JSON.stringify(headers.flatMap((name,i)=>/^ID_|^N° Dossier$|^Ref_Devis$/.test(name)?[[name,r[i]??'']]:[]));
+    const currentRows=new Map(current.values.slice(headerIndex(current)+1).map(r=>[rowKey(r),r]));
+    const values=old.values.map((r,n)=>{if(n<=h)return [...r];const found=currentRows.get(rowKey(r));return r.map((v,i)=>/^ID_|^N° Dossier$|^Ref_Devis$/.test(headers[i]??'')?v:populated(v)&&v!==(found?.[nowHeaders.indexOf(headers[i])]??'')?v:'');});
+    if(values.slice(h+1).some(r=>r.some((v,i)=>!/^ID_|^N° Dossier$|^Ref_Devis$/.test(headers[i]??'')&&populated(v))))historical.push({...old,values,historicalAt:capture.readAt});
+  }
+  const tables=[...latest,...historical], clients=new Map(baseline.clients.map(c=>[c.id,{...c}]));
   // Existing identities stay intact. New explicit source IDs are added, never merged by name.
-  for(const t of tables.filter(t=>t.tab==='Base_Centrale_360'))for(const r of t.values.slice(1)){
+  for(const t of [...[...historyCaptures].sort((a,b)=>a.readAt.localeCompare(b.readAt)).flatMap(c=>c.tables),...latest].filter(t=>t.tab==='Base_Centrale_360'))for(const r of t.values.slice(1)){
     if(!/^VDS-\d{3,6}$/.test(r[0]??'')||!r[1])continue;
     if(!clients.has(r[0]))clients.set(r[0],{id:r[0],client:r[1],contact:r[2]||'',address:r[3]||'',modelTeam:r[4]||'',techMacon:r[5]||'',finance:r[6]||'',statusAction:r[7]||'',category:'non_verifie',contractHT:null,soldeAmount:null});
   }
   const rows=new Map<string,RowObservation[]>(), unmatched:RowObservation[]=[],relations=new Map<string,string|null>();
-  for(const t of tables.filter(t=>t.key==='relational'&&t.tab==='DOSSIERS'))for(const r of t.values.slice(1)){
+  for(const t of tables.filter(t=>t.key==='relational'&&t.tab==='DOSSIERS'&&!t.historicalAt))for(const r of t.values.slice(1)){
     const refs=r[2]?.match(/VDS-\d{3,6}/g)??[];const id=refs.length===1&&clients.has(refs[0])?refs[0]:null;
     for(const key of [r[0],r[1]])if(key)relations.set(`${t.id}:${key}`,id);
   }
@@ -131,8 +147,8 @@ export function buildSheetIndex(captures:SheetsCapture[],baseline:Snapshot){
   for(const c of clients.values())for(const e of c.contact.toLowerCase().match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/g)??[])emails.set(e,new Set([...(emails.get(e)??[]),c.id]));
   const seen=new Map<string,string>();let duplicates=0;
   for(const t of tables){if(t.tab==='SYNCHRONISATION')continue;const h=headerIndex(t),headers=t.values[h]??[];
-    for(let n=h+1;n<t.values.length;n++){const raw=t.values[n];if(!raw.some(populated))continue;
-      const values=Object.fromEntries(headers.map((k,i)=>[k,text(raw[i])])),sourceId=`sheets-${hash(`${t.id}:${t.tab}:${n+1}`).slice(0,20)}`;
+    for(let n=h+1;n<t.values.length;n++){const raw=t.values[n];if(!raw.some(populated)||t.historicalAt&&!raw.some((v,i)=>!/^ID_|^N° Dossier$|^Ref_Devis$/.test(headers[i]??'')&&populated(v)))continue;
+      const values=Object.fromEntries(headers.map((k,i)=>[k,text(raw[i])])),sourceId=`sheets-${hash(`${t.id}:${t.tab}:${n+1}:${t.historicalAt??'current'}`).slice(0,20)}`;
       const row={table:t,row:n+1,values,sourceId};
       const references=[values.ID_Dossier,values['N° Dossier']].filter(Boolean);
       let id:string|null=null;
@@ -147,7 +163,7 @@ export function buildSheetIndex(captures:SheetsCapture[],baseline:Snapshot){
       rows.set(id,[...(rows.get(id)??[]),row]);
     }
   }
-  const modules:Record<string,string[]>={};for(const [id,observations]of rows)for(const r of observations){const kind=kindFor[r.table.tab];if(kind)modules[kind]=[...new Set([...(modules[kind]??[]),id])];}
+  const modules:Record<string,string[]>={};for(const [id,observations]of rows)for(const r of observations){const kind=kindFor[r.table.tab];if(kind&&!r.table.historicalAt)modules[kind]=[...new Set([...(modules[kind]??[]),id])];}
   return {clients:[...clients.values()],rows,unmatched,duplicates,modules};
 }
 export function dossier360(client:Client,observations:RowObservation[],existing:PilotResponse|undefined,revision:string,readAt:string|null,continuous:boolean):PilotResponse{
@@ -161,8 +177,8 @@ export function dossier360(client:Client,observations:RowObservation[],existing:
     add(section,{id:`base-${label}`,label,value:value||null,status:value?'unverified':'missing',sourceIds:[baseSource],note:'Valeur de l’archive conservée ; les observations plus récentes sont présentées séparément.',sourceStatus:null,humanValidated:false});
   }
   for(const o of observations){const {table:t,values:v,sourceId}=o;
-    data.sources.push({id:sourceId,label:`${t.key==='complete'?'Base complète':t.key==='relational'?'Base relationnelle':t.key} · ${t.tab} · ligne ${o.row}`,url:rowUrl(t,o.row),kind:'sheets',occurredAt:readAt,dateOriginal:null,status:'read'});
-    const sourceIds=[sourceId];
+    data.sources.push({id:sourceId,label:`${t.key==='complete'?'Base complète':t.key==='relational'?'Base relationnelle':t.key} · ${t.tab} · ligne ${o.row}`,url:rowUrl(t,o.row),kind:'sheets',occurredAt:t.historicalAt??readAt,dateOriginal:null,status:'read'});
+    const sourceIds=[sourceId];const priorLengths=new Map(data.sections.map(s=>[s.id,s.fields.length]));
     for(const [label,value] of Object.entries(v)){
       const url=safeLink(value);if(!url)continue;
       const id=sourceId+'-link-'+hash(label).slice(0,8);const host=new URL(url).hostname;
@@ -171,7 +187,7 @@ export function dossier360(client:Client,observations:RowObservation[],existing:
     const section=sectionFor[t.tab];
     if(section)for(const [label,value]of Object.entries(v)){
       if(/^ID_|^Ancien_ID|^Client$/.test(label)||!populated(value))continue;
-      add(section,{id:sourceId+'-'+label,label:label.replace(/_/g,' '),value,status:/finances/.test(section)?'unverified':'documented',sourceIds,
+      add(section,{id:sourceId+'-'+label,label:label.replace(/_/g,' '),value,entityKey:['identite','technique'].includes(section)?undefined:JSON.stringify([t.tab,Object.entries(v).filter(([k])=>/^ID_(?!Dossier|Client)|^Ref_Devis|^Ref_Contrat/.test(k)),['finances','documents','agenda','communications','actions','sources'].includes(section)&&!Object.keys(v).some(k=>/^ID_(?!Dossier|Client)|^Ref_Devis|^Ref_Contrat/.test(k))?sourceId:null]),status:/finances/.test(section)?'unverified':'documented',sourceIds,
         note:section==='finances'?'Mention du classeur, sans vérification comptable ni preuve d’encaissement.':'Information transcrite du classeur ; document ou échange original non revérifié lors de cette synchronisation.',sourceStatus:'Observation Google Sheets',humanValidated:false});
     }
     if(t.tab==='Base_Centrale_360'){
@@ -179,25 +195,26 @@ export function dossier360(client:Client,observations:RowObservation[],existing:
       for(const [label,key]of base.slice(1)){const value=v[label];if(!populated(value||''))continue;
         const sec=key==='finance'?'finances':key==='techMacon'||key==='modelTeam'?'technique':['client','contact','address'].includes(key)?'identite':'commercial';
         add(sec,{id:sourceId+'-'+key,label:`${label} · observation Sheets`,value,status:key==='finance'?'unverified':'documented',sourceIds,note:'Source conservée séparément de l’archive et des autres classeurs.',sourceStatus:null,humanValidated:false});
-        if(value!==client[key])data.contradictions.push({id:sourceId+'-difference-'+key,field:label,existingValue:client[key],observedValue:value,sourceIds:[baseSource,sourceId],reason:'La source actuelle diffère de l’archive conservée.',action:'Vérifier la valeur applicable ; aucune valeur contractuelle validée n’est écrasée.',status:'review'});
+        if(!t.historicalAt&&value!==client[key])data.contradictions.push({id:sourceId+'-difference-'+key,field:label,existingValue:client[key],observedValue:value,sourceIds:[baseSource,sourceId],reason:'La source actuelle diffère de l’archive conservée.',action:'Vérifier la valeur applicable ; aucune valeur contractuelle validée n’est écrasée.',status:'review'});
       }
       for(const [label,value]of Object.entries(v))if(!base.some(([name])=>name===label)&&populated(value)){
         const sec=/Financiere/.test(label)?'finances':/Agenda|RDV/.test(label)?'agenda':/Gmail|Mail/.test(label)?'communications':/Document/.test(label)?'documents':'commercial';
         add(sec,{id:sourceId+label,label:label.replace(/_/g,' '),value,status:'unverified',sourceIds,note:'Information figurant dans le classeur, non validation indépendante des sources.',sourceStatus:null,humanValidated:false});
       }
-      if(!existing&&t.key==='complete'&&populated(v.Resume_Intelligent_360||''))data.summary='Synthèse du classeur · '+v.Resume_Intelligent_360;
+      if(!t.historicalAt&&!existing&&t.key==='complete'&&populated(v.Resume_Intelligent_360||''))data.summary='Synthèse du classeur · '+v.Resume_Intelligent_360;
     }
     if(['ALERTES','VALIDATION','Incoherences_Detectees'].includes(t.tab))data.contradictions.push({id:sourceId,field:v.Type_Anomalie||v.Objet_Arbitrage_Humain||v.Type_Validation_Humaine||'Contrôle de cohérence',existingValue:v.Source_A||v.Valeur_Option_A||v.Donnees_Retenues||null,observedValue:v.Source_B||v.Valeur_Option_B||v.Element_Financier||null,sourceIds,reason:v.Detail_Incoherence_Detectee||v.Description_Contradiction_ou_Risque||v.Detail_Ecart_Constates||v.Question_Pour_Equipe_VDS||null,action:v.Action_Corrective_Recommandee||v.Action_Humaine_Attendue||v.Resolution_Appliquee_ou_Requise||'Validation humaine nécessaire',status:'review'});
     for(const [k,val]of Object.entries(v))if(/Prochaine_Action|Action_Concrete|Action_Immediate|Action à faire|Prochaine Action/.test(k)&&populated(val))data.nextActions.push(val);
-    if(['COMMUNICATIONS','AGENDA'].includes(t.tab)){
+    if(!t.historicalAt&&['COMMUNICATIONS','AGENDA'].includes(t.tab)){
       const date=v.Date_Dernier_Message||v.Date_Heure_ISO||v.Date_Evenement||v.Date_Jour_Reelle||null;
-      data.timeline.push({id:sourceId,dateOriginal:date,dateUTC:date&&/^\d{4}-\d{2}-\d{2}T.*(?:Z|[+-]\d{2}:?\d{2})$/.test(date)?date:null,eventDate:date&&/^\d{4}-\d{2}-\d{2}$/.test(date)?date:null,summary:v.Objet_Conversation||v.Objet_Mail||v.Intitule_Complet_Agenda||v.Titre_Complet_Summary||t.tab,category:t.tab==='AGENDA'?'agenda':'gmail',status:'unverified',sourceStatus:'Événement mentionné dans Sheets ; source originale non relue',sourceIds});
+      data.timeline.push({id:sourceId,externalEventKey:v.ID_Event||v.ID_Event_Google||v.ID_Thread||v.ID_Thread_Gmail||undefined,dateOriginal:date,dateUTC:date&&/^\d{4}-\d{2}-\d{2}T.*(?:Z|[+-]\d{2}:?\d{2})$/.test(date)?date:null,eventDate:date&&/^\d{4}-\d{2}-\d{2}$/.test(date)?date:null,summary:v.Objet_Conversation||v.Objet_Mail||v.Intitule_Complet_Agenda||v.Titre_Complet_Summary||t.tab,category:t.tab==='AGENDA'?'agenda':'gmail',status:'unverified',sourceStatus:'Événement mentionné dans Sheets ; source originale non relue',sourceIds});
     }
-    if(t.tab==='DOCUMENTS'){
+    if(!t.historicalAt&&t.tab==='DOCUMENTS'){
       const url=safeLink(v.URL_Directe||v.Lien_Acces_Direct||'');
       if(url && !/calendar/.test(url))data.documents.push({id:sourceId,filename:v.Reference_Officielle||v.Nom_Fichier_ou_Ref||v.Categorie_Document||'Référence documentaire',mimeType:null,sourceIds,url,contentRead:false,visuallyChecked:false,status:'unverified',note:'Référence du classeur ; contenu non consulté. Un lien Agenda n’est pas compté comme document.'});
     }
-    if(t.tab==='AGENDA')data.agenda.push({id:sourceId,title:v.Intitule_Complet_Agenda||v.Titre_Complet_Summary||'Événement mentionné',start:v.Date_Evenement||v.Date_Jour_Reelle||null,end:null,location:v.Lieu_Extrait||null,url:safeLink(v.Lien_Google_Calendar||v.Lien_Event_Calendar||''),sourceIds,status:'review',sourceStatus:v.Qualification_Date||v.Statut_Date||null,issues:['Association issue du classeur ; vérifier l’événement original et les éventuels reports.'],associationApproved:false,clientApprovalVerified:false,completionVerified:false});
+    if(!t.historicalAt&&t.tab==='AGENDA')data.agenda.push({id:sourceId,title:v.Intitule_Complet_Agenda||v.Titre_Complet_Summary||'Événement mentionné',start:v.Date_Evenement||v.Date_Jour_Reelle||null,end:null,location:v.Lieu_Extrait||null,url:safeLink(v.Lien_Google_Calendar||v.Lien_Event_Calendar||''),sourceIds,status:'review',sourceStatus:v.Qualification_Date||v.Statut_Date||null,issues:['Association issue du classeur ; vérifier l’événement original et les éventuels reports.'],associationApproved:false,clientApprovalVerified:false,completionVerified:false});
+    if(t.historicalAt)for(const s of data.sections)for(const f of s.fields.slice(priorLengths.get(s.id)??0)){f.status='obsolete';f.note='Valeur antérieure conservée, relevée le '+t.historicalAt+'. La source actuelle peut différer ; aucune ancienne information n’est effacée.';}
   }
   data.nextActions=[...new Set(data.nextActions)];data.lastSourceReadAt=readAt;
   data.limitations=[...new Set([...data.limitations,'Les observations des classeurs sont affichées avec leur source, sans validation automatique des contrats, paiements ou dates.','Les rapprochements ambigus sont exclus de la fiche et restent dans la file « Sources à rapprocher ».'])];

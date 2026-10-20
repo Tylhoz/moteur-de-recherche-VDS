@@ -51,7 +51,7 @@ function synchroniserVDS() {
       const receipt=envoyerVDS_({schemaVersion:'sheets-tables-1',readAt:new Date().toISOString(),tables:tables});
       properties.setProperty('vds_'+source.id,JSON.stringify({modified:version,readAt:Date.now(),digest:receipt.versions[source.id]}));
     });
-    if(heartbeats.length)envoyerVDS_({schemaVersion:'sheets-heartbeat-1',versions:heartbeats});
+    if(heartbeats.length){const receipt=envoyerVDS_({schemaVersion:'sheets-heartbeat-1',versions:heartbeats});if(receipt.refreshRequested)cfg.sources.forEach(source=>properties.deleteProperty('vds_'+source.id));}
   } catch (_) {
     // Do not log Google responses, customer values, OAuth grants or signed payloads.
     throw new Error('Synchronisation VDS interrompue. Les données précédentes sont conservées. Vérifiez les autorisations ou la structure des sources.');

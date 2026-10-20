@@ -26,7 +26,7 @@ test('private audited dossiers render all twelve tabs with evidence, unknowns an
         state: 'ready', readOnly: true, revision: bundle.sourceDigest, sourceMode: 'private_audit_snapshot',
       } };
       for (const section of sections) {
-        const html = renderToStaticMarkup(createElement(PilotDetailView, { clientId: dossier.id, onClose() {}, response, initialTab: section }));
+        const html = renderToStaticMarkup(createElement(PilotDetailView, { clientId: dossier.id, onClose() {}, response, initialTab: section, initialFullDetails:true }));
         assert.ok(html.includes(escapeHtml(dossier.name)), 'Audited identity is rendered');
         assert.equal((html.match(/role="tab"/g) || []).length, 12, 'All required tabs are exposed');
         assert.equal((html.match(/aria-selected="true"/g) || []).length, 1, 'One tab is selected');

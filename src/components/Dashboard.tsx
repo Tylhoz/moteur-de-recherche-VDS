@@ -105,13 +105,15 @@ export default function Dashboard({ snapshot, onNavigate, onSelectClient, onAnal
           <button type="button" className="pdash-donut-button" onClick={() => onAnalyze("review")}
             aria-label={`${enriched} fiches enrichies sur ${total} dossiers, soit ${coverageLabel} %. Ouvrir l’analyse des dossiers à vérifier.`}>
             <svg viewBox="0 0 200 200" aria-hidden="true"><circle className="pdash-donut-track" cx="100" cy="100" r="78" /><circle className="pdash-donut-value" cx="100" cy="100" r="78" pathLength="100" strokeDasharray={`${coverage} ${100 - coverage}`} transform="rotate(-90 100 100)" /></svg>
-            <span className="pdash-donut-center"><strong>{coverageLabel}<small>%</small></strong><span>de fiches enrichies</span><span className="pdash-donut-hint">Voir l’analyse<ArrowUpRight size={12} /></span></span>
+            <span className="pdash-donut-center"><strong>{coverageLabel}<small>%</small></strong><span>au format 360°</span></span>
           </button>
+          <button type="button" className="pdash-coverage-analysis" onClick={() => onAnalyze("review")}>Voir l’analyse<ArrowUpRight size={14} aria-hidden="true" /></button>
           <div className="pdash-coverage-legend">
             <button type="button" onClick={() => onAnalyze("review")}><span><i className="pdash-legend-aqua" />Fiches enrichies</span><strong>{integer(enriched)}<ChevronRight size={13} /></strong></button>
             <button type="button" onClick={() => onAnalyze("clients")}><span><i className="pdash-legend-pale" />À enrichir</span><strong>{integer(remaining)}<ChevronRight size={13} /></strong></button>
           </div>
-          <p className="pdash-coverage-note">Une fiche enrichie contient des informations sourcées ; ses points à vérifier restent visibles.</p>
+          {snapshot.dataCoverage&&<dl className="pdash-source-coverage"><div><dt>Fiches historiquement auditées</dt><dd>{snapshot.dataCoverage.historical}</dd></div><div><dt>Rattachées aux observations Sheets</dt><dd>{snapshot.dataCoverage.sheetsRelated} / {total}</dd></div><div><dt>Actualisation Google automatique</dt><dd>{snapshot.dataCoverage.sheetsContinuous?'Réceptions récentes':'Non confirmée'}</dd></div><div><dt>Rattachées à VosFactures</dt><dd>{snapshot.dataCoverage.accountingConnected?snapshot.dataCoverage.accountingRelated+' / '+total:'Non connecté'}</dd></div><div><dt>Dossiers entièrement vérifiés</dt><dd>{snapshot.dataCoverage.humanVerified}</dd></div></dl>}
+          <p className="pdash-coverage-note">Ce taux mesure les fiches au format 360°, pas leur complétude ni leur validation. La synchronisation et les preuves sont suivies séparément.</p>
         </section>
 
         <section className="pdash-panel pdash-finances" aria-labelledby="pdash-finance-title">

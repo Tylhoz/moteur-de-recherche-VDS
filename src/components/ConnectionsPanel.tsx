@@ -8,6 +8,7 @@ import {
   type ApprovalReceipt, type ImportReceipt, type IntegrationStatus, type SetupStatus, type SheetsPreview,
 } from '../data/connections-client';
 import './connections-panel.css';
+import SynchronizationCenter from './SynchronizationCenter';
 import SheetsSources from './SheetsSources';
 
 type Props = {
@@ -151,6 +152,7 @@ export default function ConnectionsPanel({ links = [], lastReadAt, lastCheckedAt
   const previewApplied = !!preview && approvalReceipt?.revision === preview.revision;
 
   return <div className="connections-panel">
+    <SynchronizationCenter />
     <SheetsSources />
     <div className="connections-intro">
       <div><p className="connections-eyebrow">VOTRE ESPACE PRIVÉ</p><h3>Les sources, en toute clarté.</h3>
@@ -205,7 +207,7 @@ export default function ConnectionsPanel({ links = [], lastReadAt, lastCheckedAt
           <RefreshCw size={16} className={previewing ? 'spinning' : ''} />{previewing ? 'Lecture et comparaison…' : 'Contrôler Google Sheets'}
         </button>
       </article>}
-      {invoicing && <article className="connections-source connections-source-planned">
+      {invoicing && setup?.runtime !== 'railway-node' && <article className="connections-source connections-source-planned">
         <div className="connections-source-heading"><div className="connections-provider-icon"><FileJson size={23} /></div><div><h5>{invoicing.providerConfirmed ? 'VosFactures' : 'Facturation'}</h5><p>{invoicing.providerConfirmed ? 'Fournisseur confirmé' : 'VosFactures envisagé · fournisseur à confirmer'}</p></div><span className="connections-badge">Non connecté</span></div>
         <p>{invoicing.configured ? 'Les paramètres sont présents sur le serveur. La connexion à la facturation reste désactivée.' : 'La connexion à la facturation sera préparée après confirmation du fournisseur et de l’accès autorisé.'} Aucun encaissement n’est certifié par cette connexion.</p>
       </article>}

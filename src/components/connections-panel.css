@@ -116,3 +116,5 @@
   .connections-difference-heading { flex-direction: column; gap: 3px; }
   .connections-primary { width: 100%; }
 }
+
+.sync360-review { margin:14px 0; padding:14px; background:#fff; border:1px solid #dce5ef; border-radius:10px; }

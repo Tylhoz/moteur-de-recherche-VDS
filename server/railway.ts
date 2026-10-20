@@ -12,7 +12,9 @@ async function start() {
     throw new Error('private_volume_must_be_outside_application');
   if (process.env.VDS_VOLUME_LOCKED !== 'true') throw new Error('start_with_volume_lock');
   const storage = await openPrivateStorage(root);
-  const app = createRailwayApp(process.env, storage.bucket, dist);
+  const checkpoint=await storage.createCheckpoint();
+  console.log(JSON.stringify({privateCheckpointVerified:true,objects:checkpoint.objects,created:checkpoint.created}));
+  const app = createRailwayApp(process.env, storage.bucket, dist, storage);
   const archive = await bootstrapPrivateArchive({ ...app.env, BUCKET: storage.bucket, ASSETS: app.env.ASSETS!,
     VDS_PUBLIC_ORIGIN: app.origin, VDS_OWNER_PRIVATE: 'true' }, process.env);
   if (archive) console.log(JSON.stringify({ privateArchiveReady: true, dossiers: archive.dossiers, enriched: archive.enriched }));
@@ -29,7 +31,7 @@ async function start() {
       const chunks: Buffer[] = []; let size = 0;
       for await (const chunk of incoming) {
         size += chunk.length;
-        if (size > 4 * 1024 * 1024) { outgoing.writeHead(413); outgoing.end(); return; }
+        if (size > (incoming.url === '/api/v1/backups/restore' ? 64 : 4) * 1024 * 1024) { outgoing.writeHead(413); outgoing.end(); return; }
         chunks.push(chunk);
       }
       const headers = new Headers();
@@ -47,8 +49,9 @@ async function start() {
   server.requestTimeout = 30_000; server.headersTimeout = 15_000; server.maxHeadersCount = 64;
   const port = Number(process.env.PORT || 3000);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('port_invalid');
-  server.listen(port, '0.0.0.0', () => console.log('VDS Railway server ready'));
-  const sync = setInterval(() => void runScheduledSync(app.env).catch(() => {}), 5 * 60_000);
+  const synchronizeAccounting=async()=>{const result=await app.accounting.synchronize() as {accepted?:boolean;error?:string;counts?:Record<string,number>};console.log(JSON.stringify({accountingReadOnly:true,accepted:result.accepted===true,error:result.error??null,counts:result.counts??null,...await app.auditSummary()}));};
+  server.listen(port, '0.0.0.0', () => {console.log('VDS Railway server ready');if(app.accounting.configuration().enabled&&app.accounting.configuration().configured)void synchronizeAccounting().catch(()=>{});});
+  const sync = setInterval(() => { void runScheduledSync(app.env).catch(() => {});if(app.accounting.configuration().enabled)void synchronizeAccounting().catch(()=>{}); }, 5 * 60_000);
   sync.unref();
   const stop = () => { clearInterval(sync); server.close(() => void storage.close().then(() => process.exit(0))); };
   process.once('SIGTERM', stop); process.once('SIGINT', stop);

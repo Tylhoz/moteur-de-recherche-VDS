@@ -22,7 +22,7 @@ function safeSourceUrl(value: string | null): string | null {
     const url = new URL(value);
     const calendarAlias = url.hostname === 'www.google.com' && url.pathname === '/calendar/event' && !!url.searchParams.get('eid');
     return url.protocol === 'https:' && !url.username && !url.password && !url.port
-      && (calendarAlias || ['mail.google.com', 'drive.google.com', 'docs.google.com', 'calendar.google.com'].includes(url.hostname))
+      && (calendarAlias || ['mail.google.com', 'drive.google.com', 'docs.google.com', 'calendar.google.com'].includes(url.hostname) || /^[a-z0-9-]+\.vosfactures\.fr$/.test(url.hostname)&&/^\/(?:invoices|clients)\/\d+$/.test(url.pathname)&&!url.search)
       && ![...url.searchParams.keys()].some(key => /token|secret|password|signature|credential|api.?key|resourcekey/i.test(key)) ? url.href : null;
   } catch { return null; }
 }

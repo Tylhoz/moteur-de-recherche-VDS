@@ -336,3 +336,7 @@
   .vds360-timeline-toolbar { flex-wrap: wrap; }
   .vds360-timeline-sort select { width: auto; max-width: 100%; }
 }
+
+.vds360-detail-toggle { min-height:44px; padding:9px 12px; margin:0 0 12px; border:1px solid #dce5ef; border-radius:9px; color:#1b3673; background:#f5f8fb; font:inherit; cursor:pointer; }
+
+.vds360-commercial-rules { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; margin:16px 0; }.vds360-commercial-rules label { display:grid; gap:6px; font-size:12px; }.vds360-commercial-rules input { min-width:0; width:100%; min-height:44px; border:1px solid #cdd9e9; border-radius:8px; padding:9px; color:#243a59; background:#fff; font:inherit; }@media(max-width:650px){.vds360-commercial-rules{grid-template-columns:1fr;}}

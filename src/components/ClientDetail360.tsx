@@ -1,4 +1,5 @@
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import CommercialRules from './CommercialRules';
+import { createContext, useContext, useEffect, useId, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle, ArrowDownUp, ArrowRight, CalendarDays, Check, ChevronDown, CircleHelp, Clock3, CreditCard,
   ExternalLink, FileText, FolderOpen, History, Layers3, LoaderCircle,
@@ -8,6 +9,7 @@ import type {
   PilotAgendaEvent, PilotContradiction, PilotDossier, PilotField,
   PilotFieldStatus, PilotResponse, PilotSource, PilotTimelineEvent,
 } from '../../shared/pilot-contract';
+import { consolidateFields, consolidateTimeline, consolidateContradictions } from '../../shared/consolidation';
 import { initials } from '../lib/format';
 import './client-detail-360.css';
 
@@ -15,6 +17,7 @@ interface ClientDetail360Props { clientId: string; onClose: () => void; }
 type Tab = 'overview' | 'commercial' | 'technique' | 'chantier' | 'finances' | 'communications' | 'agenda' | 'sav' | 'documents' | 'history' | 'actions' | 'sources';
 type ReadProblem = 'authentication' | 'missing' | 'unavailable' | 'invalid';
 const MISSING = 'Information non retrouvée';
+const FullDetailsContext=createContext(false);
 const tabs = [
   { id: 'overview', label: 'Vue générale', icon: UserRound },
   { id: 'commercial', label: 'Commercial', icon: FileText },
@@ -42,7 +45,7 @@ function safeSourceUrl(value: string | null | undefined): string | null {
     const url = new URL(value);
     const calendarAlias = url.hostname === 'www.google.com' && url.pathname === '/calendar/event' && !!url.searchParams.get('eid');
     if (url.protocol !== 'https:' || url.username || url.password || url.port ||
-      (!calendarAlias && !['mail.google.com', 'calendar.google.com', 'docs.google.com', 'drive.google.com'].includes(url.hostname))) return null;
+      (!calendarAlias && !['mail.google.com', 'calendar.google.com', 'docs.google.com', 'drive.google.com'].includes(url.hostname) && !(/^[a-z0-9-]+\.vosfactures\.fr$/.test(url.hostname) && /^\/(?:invoices|clients)\/\d+$/.test(url.pathname) && !url.search))) return null;
     if ([...url.searchParams.keys()].some(key => /token|secret|password|signature|credential|api[_-]?key|resourcekey/i.test(key))) return null;
     return url.href;
   } catch { return null; }
@@ -95,17 +98,21 @@ function SourceLinks({ ids, sources }: { ids: string[]; sources: Map<string, Pil
   </div>;
 }
 
-function Fields({ fields, sources, single = false }: { fields: PilotField[]; sources: Map<string, PilotSource>; single?: boolean }) {
+function Fields({ fields, sources, single = false, section = 'unknown' }: { fields: PilotField[]; sources: Map<string, PilotSource>; single?: boolean; section?: string }) {
+  const globalComplete=useContext(FullDetailsContext);const [expanded,setComplete]=useState(false);const complete=globalComplete||expanded;
+  const compact=consolidateFields(fields,section);
+  const populated=compact.filter(f=>f.status!=='missing'&&f.value);
+  const shown=complete?fields:populated.length?populated:compact.slice(0,1);
   if (!fields.length) return <Empty />;
-  return <dl className={`vds360-fields ${single ? 'is-single' : ''}`}>
-    {fields.map(field => <div key={field.id} className="vds360-field">
+  return <><button className="vds360-detail-toggle" type="button" aria-pressed={complete} disabled={globalComplete} onClick={()=>setComplete(v=>!v)}>{complete?'Vue condensée':'Afficher les détails complets'} · {fields.length} observations</button><dl className={`vds360-fields ${single ? 'is-single' : ''}`}>
+    {shown.map(field => <div key={field.id} className="vds360-field">
       <dt>{field.label}</dt>
       <dd className={field.status === 'missing' || !field.value ? 'is-missing' : ''}>{field.value || MISSING}</dd>
       {field.status !== 'missing' && <dd className="vds360-field-status"><Badge status={field.status} /></dd>}
       {field.note && <dd className="vds360-source-unavailable">{field.note}</dd>}
       <dd><SourceLinks ids={field.sourceIds} sources={sources} /></dd>
     </div>)}
-  </dl>;
+  </dl></>;
 }
 
 function Empty({ message = 'Aucune information complémentaire retrouvée dans les sources consultées.' }: { message?: string }) {
@@ -113,10 +120,11 @@ function Empty({ message = 'Aucune information complémentaire retrouvée dans l
 }
 
 function Contradictions({ items, sources }: { items: PilotContradiction[]; sources: Map<string, PilotSource> }) {
+  const full=useContext(FullDetailsContext);const shown=full?items:consolidateContradictions(items);
   if (!items.length) return null;
   return <section className="vds360-alerts" aria-label="Contradictions à vérifier">
-    <h3 className="vds360-alerts-heading"><AlertTriangle size={18} /> Points d’attention <span className="vds360-badge vds360-badge-warning">{items.length}</span></h3>
-    {items.map(item => <article key={item.id} className="vds360-conflict">
+    <h3 className="vds360-alerts-heading"><AlertTriangle size={18} /> Points d’attention <span className="vds360-badge vds360-badge-warning">{shown.length}</span></h3>
+    {shown.map(item => <article key={item.id} className="vds360-conflict">
       <div className="vds360-conflict-heading"><h4>{item.field}</h4><Badge status="review" /></div>
       <div className="vds360-comparison">
         <div><span className="vds360-comparison-label">INFORMATION EXISTANTE</span><p>{item.existingValue || MISSING}</p></div>
@@ -135,7 +143,7 @@ export interface TimelineFilters {
   order: 'newest' | 'oldest';
 }
 export const DEFAULT_TIMELINE_FILTERS: TimelineFilters = { query: '', source: 'all', category: '', status: 'all', order: 'newest' };
-const sourceKindLabel: Record<PilotSource['kind'], string> = { gmail: 'E-mail', attachment: 'Document', agenda: 'Agenda', sheets: 'Google Sheets' };
+const sourceKindLabel: Record<PilotSource['kind'], string> = { gmail: 'E-mail', attachment: 'Document', agenda: 'Agenda', sheets: 'Google Sheets', vosfactures: 'VosFactures' };
 const normalizeSearch = (value: string) => value.normalize('NFKD').replace(/\p{M}/gu, '').toLocaleLowerCase('fr-FR');
 
 /** Explicit dates only: no date or time is inferred from an event's narrative. */
@@ -212,7 +220,7 @@ export function ActivityTimeline({ events, sources, limit, onShowAll, initialFil
   const [filters, setFilters] = useState<TimelineFilters>({ ...initialFilters });
   const [expandedId, setExpandedId] = useState<string | null>(() => selectTimelineEvents(events, sources, initialFilters)[0]?.id ?? null);
   const instanceId = useId();
-  const filtered = useMemo(() => selectTimelineEvents(events, sources, filters), [events, sources, filters]);
+  const filtered = useMemo(() => selectTimelineEvents(consolidateTimeline(events), sources, filters), [events, sources, filters]);
   const visible = limit ? filtered.slice(0, limit) : filtered;
   const groups = groupTimelineDays(visible);
   const categories = useMemo(() => [...new Set(events.map(event => event.category).filter((category): category is string => !!category))].sort((a, b) => a.localeCompare(b, 'fr')), [events]);
@@ -378,11 +386,13 @@ export interface PilotDetailViewProps extends ClientDetail360Props {
   problem?: ReadProblem | null;
   onRefresh?: () => void;
   initialTab?: Tab;
+  initialFullDetails?: boolean;
 }
 
 /** Presentation layer also exercised against the real private audit in SSR tests. */
-export function PilotDetailView({ clientId, onClose, response, loading = false, problem = null, onRefresh = () => {}, initialTab = 'overview' }: PilotDetailViewProps) {
+export function PilotDetailView({ clientId, onClose, response, loading = false, problem = null, onRefresh = () => {}, initialTab = 'overview', initialFullDetails=false }: PilotDetailViewProps) {
   const [tab, setTab] = useState<Tab>(initialTab);
+  const [fullDetails,setFullDetails]=useState(initialFullDetails);
   const panel = useRef<HTMLDivElement>(null);
   const closeButton = useRef<HTMLButtonElement>(null);
   const closeRef = useRef(onClose);
@@ -422,7 +432,7 @@ export function PilotDetailView({ clientId, onClose, response, loading = false, 
   function content(data: PilotDossier) {
     if (tab === 'overview') return <>
       <div className="vds360-grid">
-        <section className="vds360-card"><h3><UserRound size={17} /> Identité et coordonnées</h3><Fields fields={fields('identite')} sources={sources} single /></section>
+        <section className="vds360-card"><h3><UserRound size={17} /> Identité et coordonnées</h3><Fields section="identite" fields={fields('identite')} sources={sources} single /></section>
         <div>
           <section className="vds360-card"><h3><Clock3 size={17} /> Situation du dossier</h3><p>{data.summary || data.scope || MISSING}</p><div className="vds360-note is-warning"><ShieldCheck size={16} /><p>{data.matching.description}<br />{data.matching.status === 'uncertain' ? 'Correspondance incertaine · À vérifier.' : 'Rapprochement proposé · validation humaine en attente.'}</p></div></section>
         </div>
@@ -436,7 +446,7 @@ export function PilotDetailView({ clientId, onClose, response, loading = false, 
       <div className="vds360-activity-workspace"><ActivityTimeline events={data.timeline} sources={sources} /><ActivityContext dossier={data} /></div>
     </>;
     if (tab === 'documents') return <>
-      <section className="vds360-card"><h3><FolderOpen size={17} /> Documents du dossier</h3><Fields fields={fields('documents')} sources={sources} /></section>
+      <section className="vds360-card"><h3><FolderOpen size={17} /> Documents du dossier</h3><Fields section="documents" fields={fields('documents')} sources={sources} /></section>
       {data.documents.length > 0 && <div className="vds360-documents">{data.documents.map(document => {
         const href = safeSourceUrl(document.url);
         return <article key={document.id} className={`vds360-document ${document.contentRead ? 'is-read' : 'is-identified'}`}>
@@ -451,28 +461,29 @@ export function PilotDetailView({ clientId, onClose, response, loading = false, 
       })}</div>}
     </>;
     if (tab === 'agenda') return <>
-      <section className="vds360-card"><h3><CalendarDays size={17} /> Dates et rendez-vous retrouvés</h3><Fields fields={fields('agenda')} sources={sources} /></section>
+      <section className="vds360-card"><h3><CalendarDays size={17} /> Dates et rendez-vous retrouvés</h3><Fields section="agenda" fields={fields('agenda')} sources={sources} /></section>
       {data.agenda.map(event => <AgendaEvent key={event.id} event={event} sources={sources} />)}
       {!data.agenda.length && <div className="vds360-note"><CalendarDays size={16} /><p>Aucun événement Agenda rattaché dans le périmètre consulté. Les dates présentes dans les e-mails restent consultables dans les onglets Chantier et Communications.</p></div>}
     </>;
     if (tab === 'communications') return <>
-      <section className="vds360-card"><h3><Mail size={17} /> Échanges importants</h3><Fields fields={fields('communications')} sources={sources} /></section>
+      <section className="vds360-card"><h3><Mail size={17} /> Échanges importants</h3><Fields section="communications" fields={fields('communications')} sources={sources} /></section>
       <ActivityTimeline events={data.timeline.filter(event => event.sourceIds.some(id => sources.get(id)?.kind === 'gmail' || event.category === 'gmail'))} sources={sources} />
     </>;
     return <>
       {tab === 'finances' && <div className="vds360-note is-warning"><ShieldCheck size={17} /><p>Les montants ci-dessous sont des observations documentaires. Une facture ou une déclaration par e-mail ne confirme pas un encaissement. La connexion API VosFactures n’est pas établie : <strong>Source non connectée</strong>.</p></div>}
       {tab === 'finances' && fields('commercial').some(field => /\bHT\b|\bTTC\b|\bTVA\b|montant|contrat|acompte/i.test(field.label)) && <section className="vds360-card"><h3><FileText size={17} /> Montants des documents commerciaux</h3><Fields fields={fields('commercial').filter(field => /\bHT\b|\bTTC\b|\bTVA\b|montant|contrat|acompte/i.test(field.label))} sources={sources} /></section>}
-      <section className="vds360-card"><h3><activeTab.icon size={17} /> {activeTab.label}</h3><Fields fields={fields(tab)} sources={sources} /></section>
+      <section className="vds360-card"><h3><activeTab.icon size={17} /> {activeTab.label}</h3><Fields section={tab} fields={fields(tab)} sources={sources} /></section>
+      {tab === 'finances' && <CommercialRules id={data.id} />}
       {tab === 'finances' && <Contradictions items={data.contradictions} sources={sources} />}
     </>;
   }
 
-  return <div className="vds360-overlay" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}>
+  return <FullDetailsContext.Provider value={fullDetails}><div className="vds360-overlay" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}>
     <div ref={panel} className="vds360-panel" role="dialog" aria-modal="true" aria-labelledby={titleId}>
       <div className="vds360-topline"><span className="vds360-eyebrow"><LockKeyhole size={13} /> VDS INTELLIGENCE 360° · LECTURE PRIVÉE</span><button type="button" ref={closeButton} className="vds360-close" aria-label="Fermer la fiche client" onClick={onClose}><X size={19} /></button></div>
       <header className="vds360-heading">
         <div className="vds360-avatar" aria-hidden="true">{dossier ? initials(dossier.name) : <UserRound size={24} />}</div>
-        <div className="vds360-heading-main"><span className="vds360-reference">{clientId} · Fiche 360°</span><h2 id={titleId}>{dossier?.name || 'Dossier client'}</h2>{dossier && <><p>{dossier.scope}</p><div className="vds360-badges"><span className="vds360-badge vds360-badge-reviewed"><FileText size={11} /> {dossier.counts.documented} informations documentées</span><span className="vds360-badge vds360-badge-warning"><AlertTriangle size={11} /> {dossier.contradictions.length} points à vérifier</span><span className="vds360-badge vds360-badge-muted">{dossier.counts.missing} informations non retrouvées</span></div></>}</div>
+        <div className="vds360-heading-main"><span className="vds360-reference">{clientId} · Fiche 360°</span><h2 id={titleId}>{dossier?.name || 'Dossier client'}</h2>{dossier && <><p>{dossier.scope}</p><div className="vds360-badges"><span className="vds360-badge vds360-badge-reviewed"><FileText size={11} /> {dossier.counts.documented} observations sourcées</span><span className="vds360-badge vds360-badge-warning"><AlertTriangle size={11} /> {dossier.contradictions.length} points à vérifier</span><span className="vds360-badge vds360-badge-muted">{dossier.counts.missing} informations non retrouvées</span></div></>}</div>
       </header>
       {dossier && response ? <>
         <div className={`vds360-sync ${stale ? 'is-stale' : ''}`} role="status">
@@ -492,6 +503,7 @@ export function PilotDetailView({ clientId, onClose, response, loading = false, 
           </nav>
           <div className="vds360-content" id={`${tabsId}-panel`} role="tabpanel" aria-labelledby={`${tabsId}-${tab}`} tabIndex={0}>
             <div className="vds360-section-heading"><div><h3>{activeTab.label}</h3><p>Chaque information conserve sa source et son statut de vérification.</p></div></div>
+<button type="button" className="vds360-detail-toggle" aria-pressed={fullDetails} onClick={()=>setFullDetails(v=>!v)}>{fullDetails?'Revenir à la vue condensée':'Afficher toutes les observations originales'}</button>
             {content(dossier)}
           </div>
         </div>
@@ -503,5 +515,5 @@ export function PilotDetailView({ clientId, onClose, response, loading = false, 
       </div></div>}
       <footer className="vds360-footer"><span><LockKeyhole size={12} /> Sources conservées · aucune modification automatique</span><button type="button" onClick={onClose}>Fermer le dossier</button></footer>
     </div>
-  </div>;
+  </div></FullDetailsContext.Provider>;
 }

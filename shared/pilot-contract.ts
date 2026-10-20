@@ -1,12 +1,13 @@
 /** Public response types only. No customer data or credentials belong in this file. */
 export type PilotFieldStatus = 'documented' | 'review' | 'missing' | 'unverified' | 'excluded' | 'obsolete';
 export interface PilotSource {
-  id: string; label: string; url: string | null; kind: 'gmail' | 'attachment' | 'agenda' | 'sheets';
+  id: string; label: string; url: string | null; kind: 'gmail' | 'attachment' | 'agenda' | 'sheets' | 'vosfactures';
   occurredAt: string | null; dateOriginal: string | null;
   status: 'read' | 'identified' | 'excluded';
 }
 export interface PilotField {
   id: string; label: string; value: string | null; status: PilotFieldStatus;
+  entityKey?: string;
   sourceIds: string[]; note: string | null; sourceStatus: string | null;
   humanValidated: false;
 }
@@ -16,7 +17,7 @@ export interface PilotContradiction {
   sourceIds: string[]; reason: string | null; action: string | null; status: 'review';
 }
 export interface PilotTimelineEvent {
-  id: string; dateOriginal: string | null; dateUTC: string | null;
+  id: string; dateOriginal: string | null; dateUTC: string | null; externalEventKey?: string;
   eventDate: string | null; summary: string; category: string | null;
   status: PilotFieldStatus; sourceStatus: string | null; sourceIds: string[];
 }

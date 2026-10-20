@@ -1,3 +1,4 @@
+import BusinessAnalytics from './BusinessAnalytics';
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Activity, ArrowDown, ArrowLeft, ArrowRight, ArrowUpRight, BarChart3, CalendarDays,
   Check, ChevronLeft, ChevronRight, CircleAlert, FileCheck2, FileText, Filter, Info,
@@ -221,6 +222,7 @@ export function AnalyticsView({ metric, snapshot, onSelectClient, onNavigateMetr
     <header className="analysis-heading"><div><div className="analysis-eyebrow"><span /> VDS INTELLIGENCE 360° / ANALYSES</div><h1>{info.title}</h1><p>{info.subtitle}</p></div>
       <button type="button" className="analysis-refresh" onClick={onRefresh} disabled={refreshing}><RefreshCw size={16} className={refreshing ? 'analysis-spinning' : ''} />{refreshing ? 'Actualisation…' : 'Actualiser'}</button>
     </header>
+    <BusinessAnalytics onSelectClient={onSelectClient} />
     <nav className="analysis-tabs" aria-label="Choisir une analyse">{(Object.keys(metrics) as AnalyticsMetric[]).map(key => { const Icon = metrics[key].icon; return <button key={key} type="button" aria-current={metric === key ? 'page' : undefined} onClick={() => onNavigateMetric(key)}><Icon size={16} />{metrics[key].label}</button>; })}</nav>
     <div className={`analysis-source-state ${error ? 'has-error' : ''}`} role={error ? 'alert' : 'status'}><ShieldCheck size={16} /><div>
       {error || (data.meta.stale ? 'Lecture privée datée · actualisation des sources non active' : 'Données issues de l’API privée')}
