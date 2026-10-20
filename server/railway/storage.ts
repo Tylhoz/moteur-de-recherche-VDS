@@ -11,11 +11,15 @@ export async function openPrivateStorage(directory: string) {
   await mkdir(root, { recursive: true, mode: 0o700 });
   if ((await lstat(root)).isSymbolicLink()) throw new Error('storage_symlink');
   await chmod(root, 0o700);
+  const restoreMarker=join(root,'.restore-incomplete');
+  async function requireComplete(){try{await lstat(restoreMarker);}catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return;throw error;}throw Error('restore_incomplete');}
+  await requireComplete();
   // scripts/start-railway.sh holds an OS flock for the process lifetime.
   // OS locks release even after a crash; no stale lock file prevents recovery.
   let queue = Promise.resolve<unknown>(undefined);
   const pathFor = (key: string) => join(root, `${createHash('sha256').update(key).digest('hex')}.json`);
   async function read(key: string) {
+    await requireComplete();
     let file;
     try { file = await open(pathFor(key), constants.O_RDONLY | constants.O_NOFOLLOW); }
     catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error; }
@@ -49,7 +53,7 @@ export async function openPrivateStorage(directory: string) {
     },
   };
   async function exportArchive(){
-    const operation=queue.then(async()=>{const entries:Record<string,{sha256:string;body:string}>={};
+    const operation=queue.then(async()=>{await requireComplete();const entries:Record<string,{sha256:string;body:string}>={};
       for(const name of await readdir(root)){if(!/^[a-f0-9]{64}\.json$/.test(name))continue;
         const file=await open(join(root,name),constants.O_RDONLY|constants.O_NOFOLLOW);try{if((await file.stat()).size>4*1024*1024)throw Error('backup_object_limit');const body=await file.readFile('utf8');entries[name]={sha256:createHash('sha256').update(body).digest('hex'),body};}finally{await file.close();}}
       const body=JSON.stringify({schemaVersion:'vds-volume-backup-1',createdAt:new Date().toISOString(),entries});return gzipSync(body);
@@ -63,7 +67,9 @@ export async function openPrivateStorage(directory: string) {
       const entries=Object.entries(data.entries) as [string,{sha256:string;body:string}][];
       if(!entries.length||entries.length>100000)throw Error('backup_invalid');
       for(const [name,value]of entries)if(!/^[a-f0-9]{64}\.json$/.test(name)||typeof value.body!=='string'||Buffer.byteLength(value.body)>4*1024*1024||createHash('sha256').update(value.body).digest('hex')!==value.sha256)throw Error('backup_invalid');
+      const marker=await open(restoreMarker,'wx',0o600);await marker.close();
       for(const [name,value]of entries){const file=await open(join(root,name),'wx',0o600);try{await file.writeFile(value.body);await file.sync();}finally{await file.close();}}
+      await unlink(restoreMarker);
       return {restoredObjects:entries.length};
     });queue=operation.catch(()=>{});return operation;
   }
