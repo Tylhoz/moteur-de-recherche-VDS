@@ -417,7 +417,7 @@ export default function App() {
           )}
           {data.snapshot && stale && !data.error && (
             <div className="error-banner" role="status">
-              <span>Synchronisation indisponible. Copie périmée conservée ; dernière lecture source {lastReadAt ? `${timeLabel(lastReadAt)} (Bangkok)` : "non retrouvée"}. {data.snapshot.sourceState?.reason}</span>
+              <span>Copie Google Sheets disponible. Actualisation automatique non confirmée ; dernière lecture source {lastReadAt ? `${timeLabel(lastReadAt)} (Bangkok)` : "non retrouvée"}. {data.snapshot.sourceState?.reason}</span>
             </div>
           )}
           {data.loading ? (

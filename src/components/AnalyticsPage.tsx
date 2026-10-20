@@ -5,7 +5,6 @@ import { Activity, ArrowDown, ArrowLeft, ArrowRight, ArrowUpRight, BarChart3, Ca
   Layers3, RefreshCw, Search, ShieldCheck, Users, Wallet, X } from 'lucide-react';
 import type { AnalyticsDossier, AnalyticsEvent, AnalyticsMetric, AnalyticsObservation, AnalyticsResponse } from '../../shared/analytics-contract';
 import type { Snapshot } from '../types';
-import { useAnalytics } from '../data/useAnalytics';
 import { initials } from '../lib/format';
 import { filterAnalysisDossiers, selectAnalysisDossiers } from '../lib/analytics';
 import './analytics.css';
@@ -277,7 +276,10 @@ function ActivitySummary({ events }: { events: AnalyticsEvent[] }) {
   return <details className="analysis-observations"><summary>{number(events.length)} événement{events.length > 1 ? 's' : ''} retrouvé{events.length > 1 ? 's' : ''}<ChevronRight size={14} /></summary><div>{events.map(event => <article key={event.id}><header><strong>{dateLabel(event.date)}</strong><span className={`analysis-status ${event.status}`}>{fieldLabels[event.status]}</span></header><p>{event.summary}</p><div className="analysis-source-links">{event.sources.filter(s => s.url).map(source => <a key={source.id} href={source.url!} target="_blank" rel="noopener noreferrer">{source.label}<ArrowUpRight size={12} /></a>)}</div></article>)}</div></details>;
 }
 export default function AnalyticsPage(props: AnalyticsPageProps) {
-  const { data, loading, error, refreshing, refresh } = useAnalytics();
-  if (!data) return <section className="analysis-page analysis-loading"><button type="button" className="analysis-back" onClick={props.onBack}><ArrowLeft size={16} /> Tableau de bord</button><span className="analysis-loading-icon"><BarChart3 size={32} /></span><h1>{metrics[props.metric].title}</h1><p role={error ? 'alert' : 'status'}>{loading ? 'Chargement des analyses depuis l’API privée…' : error || 'Les analyses sont indisponibles.'}</p>{loading ? <div className="analysis-loading-bars" aria-hidden="true"><i /><i /><i /><i /><i /></div> : <button type="button" className="analysis-refresh" onClick={() => void refresh()} disabled={refreshing}><RefreshCw size={16} /> Réessayer</button>}</section>;
-  return <AnalyticsView {...props} data={data} error={error} refreshing={refreshing} onRefresh={() => void refresh()} />;
+  const info=metrics[props.metric];
+  return <div className={`analysis-page analysis-${info.tone}`}><div className="analysis-breadcrumb"><button type="button" onClick={props.onBack}><ArrowLeft size={15}/> Tableau de bord</button><ChevronRight size={13}/><span>{info.label}</span></div>
+    <header className="analysis-heading"><div><div className="analysis-eyebrow">VDS INTELLIGENCE 360° / ANALYSES</div><h1>{info.title}</h1><p>{info.subtitle}</p></div></header>
+    <nav className="analysis-tabs" aria-label="Choisir une analyse">{(Object.keys(metrics) as AnalyticsMetric[]).map(key=>{const Icon=metrics[key].icon;return <button key={key} type="button" aria-current={props.metric===key?'page':undefined} onClick={()=>props.onNavigateMetric(key)}><Icon size={16}/>{metrics[key].label}</button>;})}</nav>
+    <BusinessAnalytics onSelectClient={props.onSelectClient}/>
+  </div>;
 }

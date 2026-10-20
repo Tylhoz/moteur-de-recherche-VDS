@@ -1,3 +1,4 @@
+import {safeAnalyticsSourceUrl} from '../../shared/source-url.js';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AnalyticsResponse } from '../../shared/analytics-contract';
 import { AUTHENTICATION_REQUIRED_EVENT, PortalApiError } from './api-client';
@@ -9,19 +10,13 @@ const safeSource = (v: unknown) => {
   if (!object(v) || typeof v.id !== 'string' || typeof v.label !== 'string') return false;
   if (v.url === null) return true;
   if (typeof v.url !== 'string') return false;
-  try {
-    const url = new URL(v.url);
-    const calendarAlias = url.hostname === 'www.google.com' && url.pathname === '/calendar/event' && !!url.searchParams.get('eid');
-    return url.protocol === 'https:' && !url.username && !url.password && !url.port &&
-      (calendarAlias || ['mail.google.com', 'docs.google.com', 'drive.google.com', 'calendar.google.com'].includes(url.hostname)) &&
-      ![...url.searchParams.keys()].some(key => /token|secret|password|signature|credential|api.?key|resourcekey/i.test(key));
-  } catch { return false; }
+  return safeAnalyticsSourceUrl(v.url)!==null;
 };
 const fieldStates = ['documented', 'review', 'missing', 'unverified', 'excluded', 'obsolete'];
 
 /** Reject malformed/private-link responses before any chart or clickable source is rendered. */
 export function validateAnalytics(value: unknown): AnalyticsResponse {
-  const invalid = () => new PortalApiError('Les données d’analyse reçues ne sont pas exploitables.');
+  const invalid = (path='response') => { console.error('[VDS analytics]', {code:'analytics_schema_invalid',path}); return new PortalApiError('Les données d’analyse reçues ne sont pas exploitables.'); };
   if (!object(value) || value.schemaVersion !== 'analytics-1' || !object(value.meta) ||
       value.meta.readOnly !== true || !nullableDate(value.meta.sourceReadAt) ||
       !nullableDate(value.meta.sourceAuditDate) || typeof value.meta.stale !== 'boolean' ||
@@ -31,7 +26,7 @@ export function validateAnalytics(value: unknown): AnalyticsResponse {
       !Array.isArray(value.dossiers) || !Array.isArray(value.activity) || !Array.isArray(value.coverage) ||
       !Array.isArray(value.events) || !Array.isArray(value.limitations) || !value.limitations.every(v => typeof v === 'string') ||
       !object(value.finance) || value.finance.contractsTotal !== null || value.finance.balancesTotal !== null ||
-      !Array.isArray(value.finance.series) || value.finance.series.length !== 0 || typeof value.finance.reason !== 'string') throw invalid();
+      !Array.isArray(value.finance.series) || value.finance.series.length !== 0 || typeof value.finance.reason !== 'string') throw invalid('root_meta_totals_finance');
   const ids = new Set<string>();
   for (const dossier of value.dossiers) {
     if (!object(dossier) || typeof dossier.id !== 'string' || !/^VDS-\d+$/.test(dossier.id) || ids.has(dossier.id) ||
@@ -39,12 +34,12 @@ export function validateAnalytics(value: unknown): AnalyticsResponse {
         !object(dossier.counts) || !['fields','documented','missing','review','unverified','excluded','obsolete','contradictions','sources','documents','documentsRead','events'].every(key => count((dossier.counts as Record<string, unknown>)[key])) ||
         !Array.isArray(dossier.months) || !dossier.months.every(v => typeof v === 'string' && /^\d{4}-\d{2}$/.test(v)) ||
         !(dossier.owner === null || typeof dossier.owner === 'string') || !Array.isArray(dossier.ownerSources) ||
-        !dossier.ownerSources.every(safeSource) || !Array.isArray(dossier.observations)) throw invalid();
+        !dossier.ownerSources.every(safeSource) || !Array.isArray(dossier.observations)) throw invalid('dossiers.identity_counts_sources');
     for (const observation of dossier.observations) {
       if (!object(observation) || typeof observation.id !== 'string' || typeof observation.label !== 'string' ||
           !(observation.value === null || typeof observation.value === 'string') || !fieldStates.includes(String(observation.status)) ||
           !['contract', 'invoice', 'payment', 'balance', 'due_date', 'financial'].includes(String(observation.category)) ||
-          !Array.isArray(observation.sources) || !observation.sources.every(safeSource)) throw invalid();
+          !Array.isArray(observation.sources) || !observation.sources.every(safeSource)) throw invalid('dossiers.observations.sources_or_fields');
     }
     ids.add(dossier.id);
   }
@@ -61,7 +56,7 @@ export function validateAnalytics(value: unknown): AnalyticsResponse {
     if (!object(event) || typeof event.id !== 'string' || typeof event.dossierId !== 'string' || !ids.has(event.dossierId) ||
         !nullableDate(event.date) || !(event.month === null || typeof event.month === 'string' && /^\d{4}-\d{2}$/.test(event.month)) ||
         typeof event.summary !== 'string' || !fieldStates.includes(String(event.status)) ||
-        !Array.isArray(event.sources) || !event.sources.every(safeSource)) throw invalid();
+        !Array.isArray(event.sources) || !event.sources.every(safeSource)) throw invalid('events.sources_or_fields');
   }
   return value as unknown as AnalyticsResponse;
 }

@@ -1,3 +1,4 @@
+import {safeAnalyticsSourceUrl} from '../shared/source-url.js';
 import type { Snapshot } from '../src/types.js';
 import type { PilotDossier, PilotField, PilotFieldStatus, PilotResponse } from '../shared/pilot-contract.js';
 import type { AnalyticsDossier, AnalyticsEvent, AnalyticsObservation, AnalyticsResponse, AnalyticsSource } from '../shared/analytics-contract.js';
@@ -16,19 +17,10 @@ function explicitDate(value: string | null | undefined): string | null {
   const literal = value.slice(0, 10), parsedDay = new Date(`${literal}T00:00:00Z`);
   return Number.isFinite(parsedDay.getTime()) && parsedDay.toISOString().slice(0, 10) === literal && Number.isFinite(Date.parse(value)) ? value : null;
 }
-function safeSourceUrl(value: string | null): string | null {
-  if (!value) return null;
-  try {
-    const url = new URL(value);
-    const calendarAlias = url.hostname === 'www.google.com' && url.pathname === '/calendar/event' && !!url.searchParams.get('eid');
-    return url.protocol === 'https:' && !url.username && !url.password && !url.port
-      && (calendarAlias || ['mail.google.com', 'drive.google.com', 'docs.google.com', 'calendar.google.com'].includes(url.hostname) || /^[a-z0-9-]+\.vosfactures\.fr$/.test(url.hostname)&&/^\/(?:invoices|clients)\/\d+$/.test(url.pathname)&&!url.search)
-      && ![...url.searchParams.keys()].some(key => /token|secret|password|signature|credential|api.?key|resourcekey/i.test(key)) ? url.href : null;
-  } catch { return null; }
-}
+
 function sourceMap(dossier: PilotDossier): Map<string, AnalyticsSource> {
   return new Map(dossier.sources.map(source => [source.id, {
-    id: source.id, label: source.label, url: safeSourceUrl(source.url), kind: source.kind,
+    id: source.id, label: source.label, url: safeAnalyticsSourceUrl(source.url), kind: source.kind,
     status: source.status, occurredAt: explicitDate(source.occurredAt),
   }]));
 }
