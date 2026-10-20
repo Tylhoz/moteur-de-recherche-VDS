@@ -1,0 +1,21 @@
+# Exemple de configuration locale uniquement : aucune donnée client ni clé réelle.
+# Copier dans .dev.vars ignoré par Git. Ne jamais publier ce fichier rempli.
+VDS_PUBLIC_ORIGIN="https://moteur-de-recherche-vds.meert-val.workers.dev"
+VDS_ACCESS_TEAM_DOMAIN=""
+VDS_ACCESS_AUD=""
+VDS_OWNER_EMAIL=""
+VDS_EXPECTED_BUNDLE_SHA256=""
+VDS_IMPORT_TOKEN_SHA256=""
+VDS_IMPORT_TOKEN=""
+VDS_RELEASE_ID="vds-cloudflare-2026-10"
+# Google Sheets : lecture seule, secrets exclusivement côté serveur
+VDS_GOOGLE_CLIENT_ID=""
+VDS_GOOGLE_CLIENT_SECRET=""
+VDS_GOOGLE_REFRESH_TOKEN=""
+VDS_LEGACY_SPREADSHEET_ID=""
+VDS_GOOGLE_SHEET_RANGE="'Base_Centrale_360'!A1:H501"
+# Facturation future : aucun appel activé dans cette version
+VDS_INVOICING_PROVIDER=""
+VDS_VOSFACTURES_ACCOUNT=""
+VDS_VOSFACTURES_API_TOKEN=""
+VDS_VOSFACTURES_ENABLED="false"

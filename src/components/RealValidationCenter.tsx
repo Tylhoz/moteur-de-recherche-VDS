@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import {
   ArrowRight,
   BookmarkCheck,
@@ -106,10 +106,43 @@ export function createSessionReviewMemory() {
     clear() { entries = {}; observedIdentities.clear(); },
   };
 }
-const sessionReviewMemory = createSessionReviewMemory();
-// This module outlives the mounted view; logout also clears notes while another page is open.
-if (typeof window !== "undefined") {
-  window.addEventListener(AUTHENTICATION_REQUIRED_EVENT, () => sessionReviewMemory.clear());
+type PrivateReviews = { schemaVersion: "private-reviews-1"; persistent: true; baseVersion: string; revision: string; reviews: Record<string, SessionReview> };
+const record = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
+export function validatePrivateReviews(value: unknown): PrivateReviews {
+  if (!record(value) || value.schemaVersion !== "private-reviews-1" || value.persistent !== true
+    || typeof value.baseVersion !== "string" || !value.baseVersion || value.baseVersion.length > 200
+    || typeof value.revision !== "string" || !/^[a-f0-9-]{36}$/i.test(value.revision)
+    || !record(value.reviews) || Object.keys(value.reviews).length > 500) throw new Error("Réponse de revue invalide.");
+  let events = 0;
+  for (const [id, review] of Object.entries(value.reviews)) {
+    if (!/^VDS-\d{3}$/.test(id) || !record(review) || typeof review.identity !== "string" || review.identity.length > 25_000
+      || typeof review.marked !== "boolean" || !Array.isArray(review.events)) throw new Error("Réponse de revue invalide.");
+    for (const event of review.events) {
+      if (!record(event) || typeof event.id !== "string" || !/^[a-f0-9-]{36}$/i.test(event.id)
+        || !["note", "marked", "unmarked"].includes(String(event.kind)) || typeof event.at !== "string" || !Number.isFinite(Date.parse(event.at))
+        || typeof event.text !== "string" || event.text.length > 2000 || typeof event.source !== "string" || event.source.length > 60_000) throw new Error("Réponse de revue invalide.");
+      if (++events > 2000) throw new Error("Réponse de revue invalide.");
+    }
+  }
+  return value as unknown as PrivateReviews;
+}
+class ReviewRequestError extends Error {
+  constructor(message: string, readonly status = 0) { super(message); }
+}
+async function requestPrivateReviews(signal: AbortSignal, body?: Record<string, unknown>): Promise<PrivateReviews> {
+  const response = await fetch("/api/v1/reviews", { method: body ? "POST" : "GET", credentials: "same-origin", cache: "no-store", redirect: "error", signal,
+    headers: { Accept: "application/json", ...(body ? { "Content-Type": "application/json" } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) });
+  if (response.status === 401 || response.status === 403) {
+    window.dispatchEvent(new Event(AUTHENTICATION_REQUIRED_EVENT));
+    throw new ReviewRequestError("Votre session doit être renouvelée.", response.status);
+  }
+  if (!response.ok) throw new ReviewRequestError(response.status === 409 ? "La revue ou sa source a changé. Actualisez puis réessayez."
+    : response.status === 507 ? "Le journal privé a atteint sa limite. Aucune entrée n’a été effacée."
+    : "Le service de revue est indisponible. Votre note n’a pas été confirmée.", response.status);
+  if (!/^application\/json(?:;|$)/i.test(response.headers.get("Content-Type") || "")) throw new ReviewRequestError("Réponse de revue invalide.");
+  const value: unknown = await response.json();
+  if (body && (!record(value) || value.saved !== true)) throw new ReviewRequestError("L’enregistrement n’a pas été confirmé.");
+  return validatePrivateReviews(value);
 }
 
 const prioritySort = (clients: Client[]) =>
@@ -140,10 +173,19 @@ export default function RealValidationCenter({
   const [category, setCategory] = useState<Category | "all">("all");
   const [markedOnly, setMarkedOnly] = useState(false);
   const [limit, setLimit] = useState(20);
-  const [, redrawReviews] = useState(0);
-  // Reconcile before reading anything for this render, including counts and filters.
-  // Purging is deliberately synchronous so a remount cannot resurrect a recycled identity.
-  const reviews = sessionReviewMemory.reconcile(clients);
+  const [storedReviews, setStoredReviews] = useState<PrivateReviews | null>(null);
+  const [reviewStatus, setReviewStatus] = useState<"loading" | "ready" | "error">("loading");
+  const [reviewError, setReviewError] = useState("");
+  const [saving, setSaving] = useState(false);
+  const requestGeneration = useRef(0);
+  const inFlightWrite = useRef(false);
+  const controllers = useRef(new Set<AbortController>());
+  const pendingAction = useRef<{ fingerprint: string; id: string } | null>(null);
+  // Filter synchronously: a recycled dossier ID never inherits another person's notes.
+  const reviews = useMemo(() => {
+    const identities = new Map(clients.map(client => [client.id, clientIdentityKey(client)]));
+    return Object.fromEntries(Object.entries(storedReviews?.reviews ?? {}).filter(([id, review]) => identities.get(id) === review.identity));
+  }, [storedReviews, clients]);
   const [draft, setDraft] = useState({ identity: "", text: "" });
   const [notice, setNotice] = useState("");
   const [modal, setModal] = useState<"source" | "missing" | null>(null);
@@ -190,17 +232,40 @@ export default function RealValidationCenter({
   const hasUnverifiedCategories = clients.some(client => client.category === "non_verifie");
   const alertFilter: Category = hasUnverifiedCategories ? "non_verifie" : "alerte";
   const events = review ? [...review.events].reverse() : [];
+  const loadReviews = useCallback(async () => {
+    if (inFlightWrite.current || controllers.current.size) return;
+    const generation = requestGeneration.current;
+    const controller = new AbortController(); controllers.current.add(controller);
+    const timeout = window.setTimeout(() => controller.abort(), 20_000);
+    setReviewStatus("loading"); setReviewError("");
+    try {
+      const result = await requestPrivateReviews(controller.signal);
+      if (generation !== requestGeneration.current) return;
+      setStoredReviews(result); setReviewStatus("ready");
+    } catch (error) {
+      if (generation !== requestGeneration.current) return;
+      setReviewStatus("error");
+      setReviewError(error instanceof ReviewRequestError ? error.message : "Impossible de charger le journal privé. Réessayez.");
+    } finally { clearTimeout(timeout); controllers.current.delete(controller); }
+  }, []);
   useEffect(() => {
     const clearReviews = () => {
-      sessionReviewMemory.clear();
-      redrawReviews(value => value + 1);
-      setDraft({ identity: "", text: "" });
-      setNotice("");
-      setModal(null);
+      requestGeneration.current++;
+      for (const controller of controllers.current) controller.abort();
+      controllers.current.clear(); pendingAction.current = null; inFlightWrite.current = false;
+      setStoredReviews(null); setReviewStatus("error"); setReviewError("Votre session doit être renouvelée."); setSaving(false);
+      setDraft({ identity: "", text: "" }); setNotice(""); setModal(null);
     };
     window.addEventListener(AUTHENTICATION_REQUIRED_EVENT, clearReviews);
-    return () => window.removeEventListener(AUTHENTICATION_REQUIRED_EVENT, clearReviews);
-  }, []);
+    void loadReviews();
+    const interval = window.setInterval(() => { if (!document.hidden) void loadReviews(); }, 30_000);
+    return () => {
+      requestGeneration.current++;
+      for (const controller of controllers.current) controller.abort();
+      controllers.current.clear();
+      clearInterval(interval); window.removeEventListener(AUTHENTICATION_REQUIRED_EVENT, clearReviews);
+    };
+  }, [loadReviews]);
   useEffect(() => {
     if (!initialized.current && clients.length) {
       initialized.current = true;
@@ -223,23 +288,42 @@ export default function RealValidationCenter({
     setNote("");
     setNotice("");
   }
-  function addEvent(kind: ReviewEvent["kind"], text: string) {
-    if (!item) return;
-    if (!sessionReviewMemory.append(item, kind, text)) return;
-    redrawReviews(value => value + 1);
-    setNotice(
-      kind === "note"
-        ? "Note de revue ajoutée pour cette session. Aucune donnée source modifiée."
-        : kind === "marked"
-          ? "Dossier marqué pour vérification dans cette session."
-          : "Marqueur de cette session retiré.",
-    );
+  async function addEvent(kind: ReviewEvent["kind"], text: string): Promise<boolean> {
+    if (!item || !storedReviews || reviewStatus !== "ready" || inFlightWrite.current) return false;
+    requestGeneration.current++;
+    for (const current of controllers.current) current.abort();
+    controllers.current.clear();
+    const generation = requestGeneration.current;
+    const action = kind === "note" ? "note" : kind === "marked" ? "flag" : "unflag";
+    const payload = { clientId: item.id, identityKey: clientIdentityKey(item), action, text: kind === "note" ? text : "", baseVersion: storedReviews.baseVersion };
+    const fingerprint = JSON.stringify(payload);
+    if (pendingAction.current?.fingerprint !== fingerprint) pendingAction.current = { fingerprint, id: crypto.randomUUID() };
+    const idempotency = pendingAction.current.id;
+    const controller = new AbortController(); controllers.current.add(controller);
+    const timeout = window.setTimeout(() => controller.abort(), 20_000);
+    inFlightWrite.current = true; setSaving(true); setNotice("");
+    try {
+      const result = await requestPrivateReviews(controller.signal, { ...payload, idempotency });
+      if (generation !== requestGeneration.current) return false;
+      setStoredReviews(result); pendingAction.current = null;
+      setNotice(kind === "note" ? `Note enregistrée dans le journal privé du dossier ${item.id}.`
+        : kind === "marked" ? `Dossier ${item.id} marqué pour vérification.` : `Marqueur du dossier ${item.id} retiré.`);
+      return true;
+    } catch (error) {
+      if (generation !== requestGeneration.current) return false;
+      setReviewStatus("error");
+      setReviewError(error instanceof ReviewRequestError ? error.message : "Enregistrement non confirmé. Votre note reste dans le formulaire ; actualisez puis réessayez.");
+      return false;
+    } finally {
+      clearTimeout(timeout); controllers.current.delete(controller);
+      if (generation === requestGeneration.current) { inFlightWrite.current = false; setSaving(false); }
+    }
   }
-  function saveNote(event: FormEvent) {
+  async function saveNote(event: FormEvent) {
     event.preventDefault();
-    if (!note.trim()) return;
-    addEvent("note", note.trim());
-    setNote("");
+    if (!item || !note.trim()) return;
+    const captured = { identity: clientIdentityKey(item), text: note };
+    if (await addEvent("note", note.trim())) setDraft(current => current.identity === captured.identity && current.text === captured.text ? { identity: current.identity, text: "" } : current);
   }
   function resetFilters() {
     setSearch("");
@@ -266,6 +350,11 @@ export default function RealValidationCenter({
           <strong>{sourceLabel}</strong> · Valeurs d’origine non vérifiées.
           {" "}{enrichedClientIds.length} fiches enrichies disponibles : ouvrez une fiche 360° pour ses preuves et contradictions.
         </span>
+      </div>
+      <div className="rvc-review-explanation" role={reviewStatus === "error" ? "alert" : "status"}>
+        {reviewStatus === "loading" ? "Chargement du journal privé…" : reviewStatus === "error" ? reviewError : "Journal privé chargé. Les notes et marqueurs sont conservés entre vos sessions."}
+        {reviewStatus === "error" && <button className="vc-link-button" onClick={() => void loadReviews()} disabled={saving}>Actualiser les revues</button>}
+        {saving && <span> Enregistrement en cours…</span>}
       </div>
       <div className="vc-summary">
         <button
@@ -319,8 +408,8 @@ export default function RealValidationCenter({
           <span>
             <span className="vc-summary-label">Marqués à vérifier</span>
             <strong>
-              {markedCount}
-              <small>dans cette session</small>
+              {storedReviews ? markedCount : "—"}
+              <small>dans le journal privé</small>
             </strong>
           </span>
         </button>
@@ -370,7 +459,7 @@ export default function RealValidationCenter({
           </select>
           {markedOnly && (
             <div className="rvc-marker-filter">
-              Marqués dans cette session
+              Marqués à vérifier
               <button
                 onClick={() => setMarkedOnly(false)}
                 aria-label="Retirer le filtre des dossiers marqués"
@@ -611,14 +700,15 @@ export default function RealValidationCenter({
                   <button
                     className={`button ${review?.marked ? "button-primary" : "button-secondary"} rvc-mark-button`}
                     onClick={() =>
-                      addEvent(
+                      void addEvent(
                         review?.marked ? "unmarked" : "marked",
                         review?.marked
-                          ? "Marqueur de vérification retiré dans cette session."
-                          : "Dossier marqué pour vérification dans cette session.",
+                          ? "Marqueur de vérification retiré."
+                          : "Dossier marqué pour vérification.",
                       )
                     }
                     aria-pressed={!!review?.marked}
+                    disabled={saving || reviewStatus !== "ready"}
                   >
                     {review?.marked ? (
                       <BookmarkCheck size={16} />
@@ -629,9 +719,9 @@ export default function RealValidationCenter({
                       ? "Retirer le marqueur de vérification"
                       : "Marquer pour vérification"}
                   </button>
-                  <form onSubmit={saveNote}>
+                  <form onSubmit={event => void saveNote(event)}>
                     <label htmlFor="rvc-note">
-                      Note de revue <span>conservée pour cette session</span>
+                      Note de revue <span>enregistrée dans votre espace privé</span>
                     </label>
                     <textarea
                       id="rvc-note"
@@ -644,7 +734,7 @@ export default function RealValidationCenter({
                     />
                     <button
                       className="button button-primary vc-confirm-button rvc-save-note"
-                      disabled={!note.trim()}
+                      disabled={!note.trim() || saving || reviewStatus !== "ready"}
                     >
                       <MessageSquareMore size={16} />
                       Consigner la note
@@ -703,7 +793,7 @@ export default function RealValidationCenter({
               <section className="vc-panel vc-history">
                 <div className="vc-section-heading">
                   <History size={20} />
-                  <h2>Journal de cette session</h2>
+                  <h2>Journal privé de revue</h2>
                   <span>
                     {events.length} entrée{events.length > 1 ? "s" : ""}
                   </span>
@@ -749,8 +839,7 @@ export default function RealValidationCenter({
       </div>
       <footer className="vc-footer">
         <LockKeyhole size={15} />
-        Notes et marqueurs conservés en mémoire uniquement ; ils disparaissent
-        au rechargement.<span>Relevé fourni : {dateTime(snapshotAt)}</span>
+        Notes et marqueurs conservés dans votre journal privé après confirmation de l’enregistrement.<span>Relevé fourni : {dateTime(snapshotAt)}</span>
       </footer>
       {item && modal === "source" && (
         <Modal

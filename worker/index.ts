@@ -1,9 +1,9 @@
 import { sha256Text, validateWorkerBundle, WORKER_BUNDLE_MAX_BYTES, type WorkerPrivateBundle } from '../shared/worker-bundle.js';
 
-export interface PrivateR2Object { text(): Promise<string>; size: number; }
+export interface PrivateR2Object { text(): Promise<string>; size: number; etag?: string; }
 export interface PrivateR2Bucket {
   get(key: string): Promise<PrivateR2Object | null>;
-  put(key: string, value: string, options?: { httpMetadata?: { contentType?: string }; onlyIf?: { etagDoesNotMatch?: string } }): Promise<unknown>;
+  put(key: string, value: string, options?: { httpMetadata?: { contentType?: string }; onlyIf?: { etagDoesNotMatch?: string; etagMatches?: string } }): Promise<unknown>;
 }
 export interface WorkerEnv {
   BUCKET: PrivateR2Bucket;
@@ -55,7 +55,7 @@ async function boundedBody(request: Request): Promise<string> {
   catch (error) { await reader.cancel().catch(() => {}); throw error; }
 }
 type ValidatedBundle = { digest: string; bundle: WorkerPrivateBundle };
-async function readActive(env: WorkerEnv, validated?: ValidatedBundle): Promise<ValidatedBundle | null> {
+export async function readActive(env: WorkerEnv, validated?: ValidatedBundle): Promise<ValidatedBundle | null> {
   const pointer = await env.BUCKET.get(pointerKey); if (!pointer) return null;
   if (pointer.size > 256) throw new Error('invalid_pointer');
   const raw = JSON.parse(await pointer.text());

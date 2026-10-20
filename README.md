@@ -1,6 +1,6 @@
 # VDS Intelligence 360° — validation privée Workers
 
-Refonte du portail VDS Pools, conservée sur la branche `feat/vds-live-portal-integration`. La nouvelle cible est un Site privé distinct ; la version 2 reste la sauvegarde et n'est pas remplacée.
+Refonte du portail VDS Pools, conservée sur la branche `feat/vds-live-portal-integration`. Le déploiement direct Cloudflare utilise un Worker applicatif et les assets Vite, avec Cloudflare Access. L'ancien aperçu Sites version 2 reste une sauvegarde distincte.
 
 ## Application conservée
 
@@ -10,7 +10,7 @@ Les 500 dossiers et les 10 fiches enrichies proviennent exclusivement d'archives
 
 ## Confidentialité
 
-Les données métier ne figurent ni dans `src`, ni dans `public`, ni dans l'artefact de déploiement. L'export réel reste hors du dépôt puis est chargé séparément dans R2 privé, avec contrôle de son empreinte. L'API et les assets sont servis par `worker/index.ts`, derrière l'authentification native Sites et une politique limitée au propriétaire. Cet adaptateur ne doit jamais être exposé directement sur une URL Worker publique.
+Les données métier ne figurent ni dans `src`, ni dans `public`, ni dans l'artefact de déploiement. L'export réel reste hors du dépôt puis est chargé séparément dans R2 privé, avec contrôle de son empreinte. L'entrée `worker/cloudflare.ts` vérifie la signature Cloudflare Access et l'identité du propriétaire avant toute API ou tout asset. Elle réutilise `worker/index.ts` comme adaptateur interne. Ce dernier ne doit jamais être exposé directement sur une URL Worker publique.
 
 Les données de tests isolées sous `tests/fixtures` ne sont pas importées par l'application. La copie historique demeure préservée dans l'ancien aperçu et dans le stockage privé ; elle n'est plus servie statiquement par cette branche.
 
@@ -20,16 +20,20 @@ Node.js 24 pour les scripts de transfert sécurisé :
 
 ```sh
 npm ci
-npm run check
-npm run worker:build
-npm run worker:verify -- --private-bundle /chemin/prive/worker-preview.private.json
+npm run build
+npm run test:foundations
+npx wrangler deploy --dry-run --outdir /tmp/vds-cloudflare-dry-run
 ```
 
-`npm run build:site` prépare l'artefact Worker pour le packager Sites. Les scripts d'export, leurs permissions et les chemins de tests réels sont décrits dans [scripts/README-worker.md](scripts/README-worker.md). Les tests d'intégration utilisent les archives privées hors dépôt ; les tests techniques isolés ne deviennent jamais des données de production.
+Suivre [la configuration Cloudflare](docs/integration/cloudflare-deployment.md) pour Access, R2, les secrets et Workers Builds. Le panneau **Données & accès** affiche les réglages disponibles, la version et les vrais comptes, puis permet l'import privé après authentification. Les tests sur archives réelles utilisent des fichiers hors dépôt ; ils sont omis si ces fichiers ne sont pas disponibles.
+
+Google Sheets est préparé en lecture seule avec une vérification toutes les cinq minutes et une file d'approbation des différences. Les notes de contrôle sont persistantes dans R2. La configuration de la future facturation est réservée, mais l'adaptateur VosFactures n'est pas encore activé : voir [les sources et leurs limites](docs/integration/provider-configuration.md).
+
+`npm run build:site` reste disponible pour l'ancien packager Sites. Les scripts d'export et les chemins privés sont décrits dans [scripts/README-worker.md](scripts/README-worker.md). Les données de test ne deviennent jamais des données de production.
 
 ## État de publication
 
-Le serveur Workers est implémenté et compilable. **Aucune nouvelle version n'est publiée** : les connexions de l'environnement échouent avec EPERM avant Cloudflare, les helpers officiels de publication ne sont pas installés. Le binding R2 est déclaré, son provisionnement reste à vérifier au déploiement. La création d'un nouveau Site privé ne vaut pas publication. La synchronisation continue Google n'est pas connectée.
+Le déploiement statique effectué par le propriétaire affiche l'interface ; cela ne prouve pas le fonctionnement de l'API. Le serveur Cloudflare direct est maintenant implémenté. La configuration du compte Cloudflare, le provisionnement R2, l'import privé et les credentials Google restent à vérifier dans l'environnement distant. L'outil local indique qu'aucun compte Cloudflare n'est authentifié ; les succès de compilation et de tests ne constituent donc pas une preuve de publication.
 
 La preuve des modifications, la séparation de V2 et la procédure de reprise se trouvent dans [docs/integration/workers-release.md](docs/integration/workers-release.md). Ne fournir un lien comme fonctionnel qu'après le déploiement et la vérification de la véritable version HTTPS.
 

@@ -16,7 +16,6 @@ import {
   CircleHelp,
   ClipboardList,
   Database,
-  ExternalLink,
   FileCheck2,
   FileText,
   HardHat,
@@ -47,6 +46,7 @@ const Clients = lazy(() => import("./components/Clients"));
 const Workspace = lazy(() => import("./components/Workspace"));
 const ClientDetail = lazy(() => import("./components/ClientDetail"));
 const ClientDetail360 = lazy(() => import("./components/ClientDetail360"));
+const ConnectionsPanel = lazy(() => import("./components/ConnectionsPanel"));
 
 const navigation = [
   { id: "dashboard", label: "Tableau de bord", icon: LayoutDashboard },
@@ -401,9 +401,12 @@ export default function App() {
                   ? ` Copie périmée : dernière lecture source ${lastReadAt ? timeLabel(lastReadAt) + " (Bangkok)" : "non retrouvée"}.`
                   : ""}
               </span>
-              {data.authenticationRequired
-                ? <a className="button primary" href="/signin-with-chatgpt">Se reconnecter</a>
-                : <button onClick={() => void data.refresh()}>Réessayer</button>}
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+                {data.authenticationRequired
+                  ? <a className="button primary" href="/">Se reconnecter</a>
+                  : <button onClick={() => void data.refresh()}>Réessayer</button>}
+                <button onClick={openSettings}>Données & accès</button>
+              </div>
             </div>
           )}
           {data.snapshot && !stale && (
@@ -520,63 +523,17 @@ export default function App() {
         </button>
       </nav>
       {settings && (
-        <Modal title="Données & accès" onClose={() => setSettings(false)}>
-          <div className="settings-content">
-            <p className="muted">
-              Les dossiers sont récupérés par l’API privée en lecture seule. Les données historiques restent distinctes des informations enrichies et sourcées.
-            </p>
-            <div className="connection-preview">
-              <span className="connection-logo">
-                <ShieldCheck size={20} />
-              </span>
-              <div>
-                <strong>Authentification obligatoire</strong>
-                <p>Session protégée par le serveur ; aucune clé privée dans le navigateur</p>
-              </div>
-              <span className="badge">Accès privé</span>
-            </div>
-            <div className="settings-sync">
-              <Database size={19} />
-              <div>
-                <strong>Vos dossiers réels, en lecture seule</strong>
-                <p>
-                  La recherche conserve les dossiers historiques. Les fiches enrichies présentent leurs sources et les points à vérifier. Les anciens montants ne sont pas utilisés comme indicateurs financiers certifiés.
-                </p>
-              </div>
-            </div>
-            <div className="connection-preview">
-              <span className="connection-logo">
-                <Database size={20} />
-              </span>
-              <div>
-                <strong>Google Sheets</strong>
-                <p>{data.snapshot?.connection.sheetReady ? "Lecture serveur configurée" : "Source non connectée au serveur · archive réelle uniquement"}</p>
-              </div>
-              <span className="badge">{data.snapshot?.connection.sheetReady ? "Lecture seule" : "À connecter"}</span>
-            </div>
-            {!!data.snapshot?.links?.length && (
-              <div className="legacy-links">
-                <strong>Vos feuilles de référence</strong>
-                {data.snapshot.links.map((link) => (
-                  <a
-                    key={link.url}
-                    href={link.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    {link.label}
-                    <ExternalLink size={13} />
-                  </a>
-                ))}
-              </div>
-            )}
-            <p className="settings-future">
-              Dernière lecture réussie de la source : {lastReadAt ? `${timeLabel(lastReadAt)} (Bangkok)` : "Information non retrouvée"}.<br />
-              Dernière vérification de l’API : {data.lastCheckedAt ? `${timeLabel(data.lastCheckedAt)} (Bangkok)` : "Information non retrouvée"}.<br />
-              Dernière tentative du navigateur : {data.lastAttemptAt ? `${timeLabel(data.lastAttemptAt)} (Bangkok)` : "Information non retrouvée"}.<br />
-              {data.snapshot?.sourceState?.reason || "Vérification de l’API toutes les 30 secondes lorsque l’application est visible."}
-            </p>
-          </div>
+        <Modal title="Données & accès" onClose={() => setSettings(false)} wide>
+          <Suspense fallback={<Loading />}>
+            <ConnectionsPanel
+              links={data.snapshot?.links}
+              lastReadAt={lastReadAt}
+              lastCheckedAt={data.lastCheckedAt}
+              lastAttemptAt={data.lastAttemptAt}
+              formatDate={(value) => `${timeLabel(value)} (Bangkok)`}
+              onImported={data.refresh}
+            />
+          </Suspense>
         </Modal>
       )}
       {help && (

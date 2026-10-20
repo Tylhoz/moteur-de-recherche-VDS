@@ -123,6 +123,9 @@ export function createPortalSnapshotClient(fetcher: typeof fetch = fetch) {
         cached = { ...cached, fetchedAt: date(fetchedAt) ? fetchedAt! : cached.fetchedAt, sourceState: state };
         return { snapshot: cached, checkedAt };
       }
+      if (response.ok && response.headers.get("Content-Type")?.toLowerCase().includes("text/html")) {
+        throw new PortalApiError("Interface publiée, API non déployée. Ouvrez Données & accès pour vérifier l’environnement privé.", response.status);
+      }
       if (!response.ok || !response.headers.get("Content-Type")?.includes("application/json")) {
         throw new PortalApiError(response.status === 503
           ? "Source non connectée ou synchronisation indisponible. La source privée doit être configurée côté serveur."

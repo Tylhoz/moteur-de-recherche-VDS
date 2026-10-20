@@ -5,9 +5,15 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
+    "prebuild": "node scripts/cloudflare-release.mjs",
     "build": "tsc --noEmit && vite build",
+    "postbuild": "node scripts/cloudflare-preflight.mjs",
+    "deploy:cloudflare": "wrangler deploy",
+    "preview:cloudflare": "wrangler dev",
     "preview": "vite preview --host 127.0.0.1",
+    "precheck": "node scripts/cloudflare-release.mjs",
     "check": "tsc --noEmit",
+    "pretest:foundations": "node scripts/cloudflare-release.mjs",
     "test:foundations": "node --import tsx --test --test-isolation=none tests/*.test.ts",
     "api:readonly": "node --import tsx server/index.ts",
     "test:integration": "node --import tsx --test --test-isolation=none tests/integration*.test.ts",
@@ -17,6 +23,7 @@
     "build:site": "npm run worker:build && npm run worker:verify && node scripts/stage-worker.mjs"
   },
   "dependencies": {
+    "jose": "6.2.12",
     "lucide-react": "^0.468.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
@@ -29,6 +36,7 @@
     "@vitejs/plugin-react": "^4.3.4",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
-    "vite": "^6.0.5"
+    "vite": "^6.0.5",
+    "wrangler": "4.151.2"
   }
 }

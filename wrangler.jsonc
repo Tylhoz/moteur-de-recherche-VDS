@@ -1,0 +1,32 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "moteur-de-recherche-vds",
+  "main": "worker/cloudflare.ts",
+  "compatibility_date": "2026-10-20",
+  "workers_dev": true,
+  "preview_urls": false,
+  "keep_vars": true,
+  "minify": true,
+  "upload_source_maps": false,
+  "triggers": { "crons": ["*/5 * * * *"] },
+  "build": {
+    "command": "npm run build"
+  },
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "run_worker_first": true,
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "none"
+  },
+  "r2_buckets": [
+    {
+      "binding": "BUCKET",
+      "bucket_name": "vds-intelligence-360-private"
+    }
+  ],
+  "vars": {
+    "VDS_PUBLIC_ORIGIN": "https://moteur-de-recherche-vds.meert-val.workers.dev",
+    "VDS_RELEASE_ID": "vds-cloudflare-2026-10"
+  }
+}
