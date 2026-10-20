@@ -1,7 +1,7 @@
 /** Public response types only. No customer data or credentials belong in this file. */
 export type PilotFieldStatus = 'documented' | 'review' | 'missing' | 'unverified' | 'excluded' | 'obsolete';
 export interface PilotSource {
-  id: string; label: string; url: string | null; kind: 'gmail' | 'attachment' | 'agenda';
+  id: string; label: string; url: string | null; kind: 'gmail' | 'attachment' | 'agenda' | 'sheets';
   occurredAt: string | null; dateOriginal: string | null;
   status: 'read' | 'identified' | 'excluded';
 }
@@ -53,5 +53,5 @@ export interface PilotBundle {
 export interface PilotResponse {
   data: PilotDossier;
   meta: { lastReadAt: string; lastSourceReadAt: string | null; state: string;
-    readOnly: true; revision: string; sourceMode: 'private_audit_snapshot' };
+    readOnly: true; revision: string; sourceMode: 'private_audit_snapshot' | 'sheets_observations'; continuous?: boolean };
 }

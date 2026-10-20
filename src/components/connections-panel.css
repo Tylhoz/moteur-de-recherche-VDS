@@ -1,6 +1,17 @@
 .connections-panel { padding: 25px; color: #243a59; font-size: 13px; line-height: 1.6; }
 .connections-panel *, .connections-panel *::before, .connections-panel *::after { box-sizing: border-box; }
 .connections-panel p { margin: 0; }
+.connections-card { margin-bottom: 24px; padding: 20px; border: 1px solid #dfe7f2; border-top: 3px solid #ffcc00; border-radius: 14px; background: #fff; overflow-wrap: anywhere; }
+.connections-card h3 { margin: 0 0 12px; color: #1b3673; font-size: 19px; }
+.connections-card p { margin: 9px 0; }
+.connections-card details { margin-top: 12px; padding: 12px; background: #f5f8fc; border: 1px solid #e3eaf4; border-radius: 10px; }
+.connections-card summary { cursor: pointer; min-height: 30px; color: #1b3673; font-weight: 600; }
+.connections-card a { display: inline-block; color: #235d9d; padding: 8px 0; }
+.connections-card label { display: block; margin: 15px 0; }
+.connections-card input { display: block; width: 100%; min-height: 44px; border: 1px solid #cdd9e9; border-radius: 8px; padding: 10px; background: #fff; color: #243a59; }
+.connections-card dt { font-size: 11px; color: #69788b; margin-top: 10px; }
+.connections-card dd { margin: 3px 0; }
+.connections-card button { min-height: 44px; border: 1px solid #cdd9e9; border-radius: 8px; margin-top: 12px; padding: 8px 12px; background: #fff; color: #235d9d; cursor: pointer; }
 .connections-panel button, .connections-panel input { font: inherit; }
 .connections-panel button, .connections-panel a, .connections-panel summary { -webkit-tap-highlight-color: transparent; }
 .connections-panel button:focus-visible, .connections-panel a:focus-visible, .connections-panel input:focus-visible, .connections-panel summary:focus-visible { outline: 3px solid #235d9d; outline-offset: 3px; }

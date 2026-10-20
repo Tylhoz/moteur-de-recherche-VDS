@@ -16,6 +16,8 @@ async function start() {
   const archive = await bootstrapPrivateArchive({ ...app.env, BUCKET: storage.bucket, ASSETS: app.env.ASSETS!,
     VDS_PUBLIC_ORIGIN: app.origin, VDS_OWNER_PRIVATE: 'true' }, process.env);
   if (archive) console.log(JSON.stringify({ privateArchiveReady: true, dossiers: archive.dossiers, enriched: archive.enriched }));
+  const sheetImport = await app.sheets360.bootstrap();
+  if (sheetImport) console.log(JSON.stringify({sheetsObservationsReady: true, ...sheetImport}));
   const server = createServer(async (incoming, outgoing) => {
     try {
       if (incoming.url === '/healthz' && ['GET', 'HEAD'].includes(incoming.method || '')) {

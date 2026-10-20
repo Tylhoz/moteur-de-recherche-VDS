@@ -74,15 +74,18 @@ export default function Workspace({
   const categoryId = useId();
   const config = moduleConfig[kind];
   // An unclassified source is an incomplete inventory, never proof of zero activity.
-  const hasUnverifiedCategories = snapshot.clients.some(
+  const hasSourceInventory = snapshot.moduleClientIds !== undefined;
+  const hasUnverifiedCategories = !hasSourceInventory && snapshot.clients.some(
     client => client.category === "non_verifie",
   );
 
   const related = useMemo(
-    () => hasUnverifiedCategories
+    () => hasSourceInventory
+      ? snapshot.clients.filter(client => (snapshot.moduleClientIds?.[kind] ?? []).includes(client.id))
+      : hasUnverifiedCategories
       ? snapshot.clients
       : snapshot.clients.filter((client) => isRelated(client, kind)),
-    [snapshot.clients, kind, hasUnverifiedCategories],
+    [snapshot.clients, snapshot.moduleClientIds, kind, hasUnverifiedCategories, hasSourceInventory],
   );
   const filtered = useMemo(
     () =>
@@ -125,9 +128,9 @@ export default function Workspace({
           <FolderOpen size={23} />
         </span>
         <div>
-          <strong>{hasUnverifiedCategories ? "Classement métier non vérifié" : "Mentions historiques à rapprocher"}</strong>
+          <strong>{hasUnverifiedCategories ? "Classement métier non vérifié" : hasSourceInventory ? "Dossiers rattachés aux tables métier" : "Mentions historiques à rapprocher"}</strong>
           <p>
-            {hasUnverifiedCategories
+            {hasSourceInventory ? "Ces dossiers possèdent des lignes dans les tables de cette rubrique. Les statuts et montants restent des observations à vérifier ; ouvrez la fiche 360° pour les détails et les sources." : hasUnverifiedCategories
               ? `Informations insuffisantes pour établir les dossiers de la rubrique « ${config.title} ». Tous les dossiers disponibles restent consultables ci-dessous, sans leur attribuer ce statut métier. Les éléments documentés se trouvent dans les fiches 360°.`
               : "Consultez les dossiers en lecture seule. Les rubriques ci-dessous regroupent les mentions historiques ; les pièces et informations documentées se trouvent dans les fiches 360°. Une mention de vente ou de solde ne certifie pas un contrat ou un encaissement."}
           </p>
@@ -187,9 +190,9 @@ export default function Workspace({
 
         <div className="workspace-results-heading">
           <strong aria-live="polite" aria-atomic="true">
-            {hasUnverifiedCategories ? "Dossiers consultables" : "Dossiers à rapprocher"} <span>{filtered.length}</span>
+            {hasSourceInventory ? "Dossiers liés à cette rubrique" : hasUnverifiedCategories ? "Dossiers consultables" : "Dossiers à rapprocher"} <span>{filtered.length}</span>
           </strong>
-          <small>{hasUnverifiedCategories ? `Ce nombre indique les dossiers consultables. Leur affectation à la rubrique « ${config.title} » reste non vérifiée.` : relatedDescriptions[kind]}</small>
+          <small>{hasSourceInventory ? "Nombre de références de dossiers distinctes, pas nombre de tickets ni de factures." : hasUnverifiedCategories ? `Ce nombre indique les dossiers consultables. Leur affectation à la rubrique « ${config.title} » reste non vérifiée.` : relatedDescriptions[kind]}</small>
         </div>
 
         {filtered.length ? (

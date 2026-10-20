@@ -8,6 +8,7 @@ import {
   type ApprovalReceipt, type ImportReceipt, type IntegrationStatus, type SetupStatus, type SheetsPreview,
 } from '../data/connections-client';
 import './connections-panel.css';
+import SheetsSources from './SheetsSources';
 
 type Props = {
   links?: SourceLink[]; lastReadAt?: string | null; lastCheckedAt?: string | null; lastAttemptAt?: string | null;
@@ -150,6 +151,7 @@ export default function ConnectionsPanel({ links = [], lastReadAt, lastCheckedAt
   const previewApplied = !!preview && approvalReceipt?.revision === preview.revision;
 
   return <div className="connections-panel">
+    <SheetsSources />
     <div className="connections-intro">
       <div><p className="connections-eyebrow">VOTRE ESPACE PRIVÉ</p><h3>Les sources, en toute clarté.</h3>
         <p>Consultez l’état réel de l’accès, de l’archive et des connexions. Chaque écart reste visible avant toute validation.</p></div>
@@ -190,7 +192,7 @@ export default function ConnectionsPanel({ links = [], lastReadAt, lastCheckedAt
     <section className="connections-sources" aria-labelledby="connections-sources-title">
       <h4 id="connections-sources-title">Vos sources</h4>
       {integrationError && !duplicateError && <Failure error={integrationError} />}
-      {sheets && <article className="connections-source">
+      {sheets && setup?.runtime !== 'railway-node' && <article className="connections-source">
         <div className="connections-source-heading"><div className="connections-provider-icon"><Database size={23} /></div><div><h5>Google Sheets</h5><p>Source principale · lecture seule</p></div><ProviderBadge {...sheets} /></div>
         <p>{sheets.configured ? 'Les paramètres de lecture sont présents sur le serveur. Le contrôle lit la feuille et compare ses valeurs à l’archive, sans appliquer les différences.' : 'La connexion de lecture doit être configurée sur le serveur. Aucune clé n’est demandée dans le navigateur.'}</p>
         <dl className="connections-provider-details"><div><dt>Paramètres serveur</dt><dd>{sheets.configured ? 'Configurés' : 'À configurer'}</dd></div>

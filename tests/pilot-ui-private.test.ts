@@ -10,7 +10,7 @@ const evidencePath = process.env.VDS_PILOT_UI_DATA;
 const skip = evidencePath ? false : 'Private audited dossier bundle not configured';
 const escapeHtml = (value: string) => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#x27;');
 
-test('private audited dossiers render all ten sections with evidence, unknowns and protected links', { skip }, async () => {
+test('private audited dossiers render all twelve tabs with evidence, unknowns and protected links', { skip }, async () => {
   const bundle = JSON.parse(await readFile(evidencePath!, 'utf8')) as PilotBundle;
   assert.equal(bundle.schemaVersion, 'pilot-1');
   assert.equal(bundle.sourceMode, 'private_audit_snapshot');
@@ -19,7 +19,7 @@ test('private audited dossiers render all ten sections with evidence, unknowns a
   const vite = await createServer({ server: { middlewareMode: true, watch: null }, appType: 'custom', logLevel: 'silent' });
   try {
     const { PilotDetailView } = await vite.ssrLoadModule('/src/components/ClientDetail360.tsx');
-    const sections = ['overview', 'commercial', 'technique', 'chantier', 'finances', 'communications', 'agenda', 'sav', 'documents', 'history'];
+    const sections = ['overview', 'commercial', 'technique', 'chantier', 'finances', 'communications', 'agenda', 'sav', 'documents', 'history', 'actions', 'sources'];
     for (const dossier of bundle.dossiers) {
       const response: PilotResponse = { data: dossier, meta: {
         lastReadAt: bundle.generatedAt, lastSourceReadAt: dossier.lastSourceReadAt,
@@ -28,7 +28,7 @@ test('private audited dossiers render all ten sections with evidence, unknowns a
       for (const section of sections) {
         const html = renderToStaticMarkup(createElement(PilotDetailView, { clientId: dossier.id, onClose() {}, response, initialTab: section }));
         assert.ok(html.includes(escapeHtml(dossier.name)), 'Audited identity is rendered');
-        assert.equal((html.match(/role="tab"/g) || []).length, 10, 'All required tabs are exposed');
+        assert.equal((html.match(/role="tab"/g) || []).length, 12, 'All required tabs are exposed');
         assert.equal((html.match(/aria-selected="true"/g) || []).length, 1, 'One tab is selected');
         assert.equal((html.match(/role="tabpanel"/g) || []).length, 1, 'One accessible panel is exposed');
         assert.match(html, /role="dialog" aria-modal="true" aria-labelledby="[^"]+"/);

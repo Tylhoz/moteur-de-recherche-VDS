@@ -59,6 +59,7 @@ export function validatePortalSnapshot(value: unknown): Snapshot {
         new Set(value.enrichedClientIds).size !== value.enrichedClientIds.length))) {
     throw new PortalApiError("Les références des dossiers reçus ne sont pas valides.");
   }
+  if (value.moduleClientIds !== undefined && (!object(value.moduleClientIds) || Object.entries(value.moduleClientIds).some(([kind, list]) => !['devis','ventes','chantiers','factures','sav'].includes(kind) || !Array.isArray(list) || list.some(id => typeof id !== 'string' || !ids.has(id))))) throw new PortalApiError("Index métier invalide.");
   return value as unknown as Snapshot;
 }
 

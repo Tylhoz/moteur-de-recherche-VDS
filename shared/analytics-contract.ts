@@ -41,7 +41,7 @@ export interface AnalyticsResponse {
   schemaVersion: 'analytics-1';
   meta: { sourceReadAt: string | null; sourceAuditDate: string | null;
     stale: boolean; state: string; revision: string; sourceRevision: string; readOnly: true;
-    sourceMode: 'private_audit_snapshot'; activityDateBasis: 'source_communication_date_utc' };
+    sourceMode: 'private_audit_snapshot' | 'sheets_observations'; activityDateBasis: 'source_communication_date_utc' };
   totals: { clients: number; enriched: number; unenriched: number; documentedFields: number;
     missingFields: number; reviewFields: number; contradictions: number; reviewDossiers: number;
     sources: number; documents: number; documentsRead: number; events: number;

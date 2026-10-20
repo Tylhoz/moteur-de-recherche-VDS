@@ -25,7 +25,7 @@ export function validateAnalytics(value: unknown): AnalyticsResponse {
   if (!object(value) || value.schemaVersion !== 'analytics-1' || !object(value.meta) ||
       value.meta.readOnly !== true || !nullableDate(value.meta.sourceReadAt) ||
       !nullableDate(value.meta.sourceAuditDate) || typeof value.meta.stale !== 'boolean' ||
-      typeof value.meta.sourceRevision !== 'string' || value.meta.sourceMode !== 'private_audit_snapshot' ||
+      typeof value.meta.sourceRevision !== 'string' || !['private_audit_snapshot','sheets_observations'].includes(String(value.meta.sourceMode)) ||
       typeof value.meta.state !== 'string' || typeof value.meta.revision !== 'string' ||
       !object(value.totals) || !['clients','enriched','unenriched','documentedFields','missingFields','reviewFields','contradictions','reviewDossiers','sources','documents','documentsRead','events','datedEvents','undatedEvents','humanValidated'].every(key => count((value.totals as Record<string, unknown>)[key])) || value.totals.humanValidated !== 0 ||
       !Array.isArray(value.dossiers) || !Array.isArray(value.activity) || !Array.isArray(value.coverage) ||

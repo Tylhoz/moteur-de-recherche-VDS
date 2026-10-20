@@ -12,7 +12,7 @@ import { initials } from '../lib/format';
 import './client-detail-360.css';
 
 interface ClientDetail360Props { clientId: string; onClose: () => void; }
-type Tab = 'overview' | 'commercial' | 'technique' | 'chantier' | 'finances' | 'communications' | 'agenda' | 'sav' | 'documents' | 'history';
+type Tab = 'overview' | 'commercial' | 'technique' | 'chantier' | 'finances' | 'communications' | 'agenda' | 'sav' | 'documents' | 'history' | 'actions' | 'sources';
 type ReadProblem = 'authentication' | 'missing' | 'unavailable' | 'invalid';
 const MISSING = 'Information non retrouvée';
 const tabs = [
@@ -26,6 +26,8 @@ const tabs = [
   { id: 'sav', label: 'SAV', icon: CircleHelp },
   { id: 'documents', label: 'Documents', icon: FolderOpen },
   { id: 'history', label: 'Historique global', icon: History },
+  { id: 'actions', label: 'Actions et suivi', icon: Check },
+  { id: 'sources', label: 'Sources', icon: Layers3 },
 ] as const;
 
 const statusLabel: Record<PilotFieldStatus, string> = {
@@ -133,7 +135,7 @@ export interface TimelineFilters {
   order: 'newest' | 'oldest';
 }
 export const DEFAULT_TIMELINE_FILTERS: TimelineFilters = { query: '', source: 'all', category: '', status: 'all', order: 'newest' };
-const sourceKindLabel: Record<PilotSource['kind'], string> = { gmail: 'E-mail', attachment: 'Document', agenda: 'Agenda' };
+const sourceKindLabel: Record<PilotSource['kind'], string> = { gmail: 'E-mail', attachment: 'Document', agenda: 'Agenda', sheets: 'Google Sheets' };
 const normalizeSearch = (value: string) => value.normalize('NFKD').replace(/\p{M}/gu, '').toLocaleLowerCase('fr-FR');
 
 /** Explicit dates only: no date or time is inferred from an event's narrative. */
@@ -298,7 +300,7 @@ function isPilotResponse(value: unknown, id: string): value is PilotResponse {
     Array.isArray(data.agenda) && data.agenda.every(event => event && typeof event.id === 'string' && typeof event.title === 'string' && optionalText(event.start) && optionalText(event.end) && optionalText(event.location) && optionalText(event.url) && optionalText(event.sourceStatus) && strings(event.sourceIds) && strings(event.issues)) &&
     strings(data.nextActions) && strings(data.limitations) && !!data.matching && typeof data.matching.description === 'string' && !!data.counts &&
     [data.counts.documented, data.counts.missing].every(count => Number.isSafeInteger(count) && count >= 0) &&
-    response.meta?.readOnly === true && typeof response.meta.lastReadAt === 'string' && optionalText(response.meta.lastSourceReadAt) && response.meta.sourceMode === 'private_audit_snapshot';
+    response.meta?.readOnly === true && typeof response.meta.lastReadAt === 'string' && optionalText(response.meta.lastSourceReadAt) && ['private_audit_snapshot', 'sheets_observations'].includes(response.meta.sourceMode);
 }
 
 export default function ClientDetail360({ clientId, onClose }: ClientDetail360Props) {
@@ -455,7 +457,7 @@ export function PilotDetailView({ clientId, onClose, response, loading = false, 
     </>;
     if (tab === 'communications') return <>
       <section className="vds360-card"><h3><Mail size={17} /> Échanges importants</h3><Fields fields={fields('communications')} sources={sources} /></section>
-      <ActivityTimeline events={data.timeline.filter(event => event.sourceIds.some(id => sources.get(id)?.kind === 'gmail'))} sources={sources} />
+      <ActivityTimeline events={data.timeline.filter(event => event.sourceIds.some(id => sources.get(id)?.kind === 'gmail' || event.category === 'gmail'))} sources={sources} />
     </>;
     return <>
       {tab === 'finances' && <div className="vds360-note is-warning"><ShieldCheck size={17} /><p>Les montants ci-dessous sont des observations documentaires. Une facture ou une déclaration par e-mail ne confirme pas un encaissement. La connexion API VosFactures n’est pas établie : <strong>Source non connectée</strong>.</p></div>}
@@ -470,11 +472,11 @@ export function PilotDetailView({ clientId, onClose, response, loading = false, 
       <div className="vds360-topline"><span className="vds360-eyebrow"><LockKeyhole size={13} /> VDS INTELLIGENCE 360° · LECTURE PRIVÉE</span><button type="button" ref={closeButton} className="vds360-close" aria-label="Fermer la fiche client" onClick={onClose}><X size={19} /></button></div>
       <header className="vds360-heading">
         <div className="vds360-avatar" aria-hidden="true">{dossier ? initials(dossier.name) : <UserRound size={24} />}</div>
-        <div className="vds360-heading-main"><span className="vds360-reference">{clientId} · Fiche enrichie</span><h2 id={titleId}>{dossier?.name || 'Dossier client'}</h2>{dossier && <><p>{dossier.scope}</p><div className="vds360-badges"><span className="vds360-badge vds360-badge-reviewed"><FileText size={11} /> {dossier.counts.documented} informations documentées</span><span className="vds360-badge vds360-badge-warning"><AlertTriangle size={11} /> {dossier.contradictions.length} points à vérifier</span><span className="vds360-badge vds360-badge-muted">{dossier.counts.missing} informations non retrouvées</span></div></>}</div>
+        <div className="vds360-heading-main"><span className="vds360-reference">{clientId} · Fiche 360°</span><h2 id={titleId}>{dossier?.name || 'Dossier client'}</h2>{dossier && <><p>{dossier.scope}</p><div className="vds360-badges"><span className="vds360-badge vds360-badge-reviewed"><FileText size={11} /> {dossier.counts.documented} informations documentées</span><span className="vds360-badge vds360-badge-warning"><AlertTriangle size={11} /> {dossier.contradictions.length} points à vérifier</span><span className="vds360-badge vds360-badge-muted">{dossier.counts.missing} informations non retrouvées</span></div></>}</div>
       </header>
       {dossier && response ? <>
         <div className={`vds360-sync ${stale ? 'is-stale' : ''}`} role="status">
-          <div>{stale ? <AlertTriangle size={14} /> : <ShieldCheck size={14} />}<span>{stale ? 'Synchronisation indisponible · dernière version conservée' : 'Lecture des informations auditées'}<small>Dernière lecture réussie du portail : {displayDate(response.meta.lastReadAt)}.</small><small>Dernière consultation des sources : {displayDate(sourceRead)}. Connexion continue aux sources : non activée.</small></span></div>
+          <div>{stale ? <AlertTriangle size={14} /> : <ShieldCheck size={14} />}<span>{stale ? 'Synchronisation indisponible · dernière version conservée' : 'Informations sourcées · vérifications détaillées dans chaque rubrique'}<small>Dernière lecture réussie du portail : {displayDate(response.meta.lastReadAt)}.</small><small>Dernière consultation des sources : {displayDate(sourceRead)}. {response.meta.continuous ? 'Synchronisation Sheets active · contrôle chaque minute, sous réserve des délais Google.' : response.meta.sourceMode === 'sheets_observations' ? 'Copie des sources · synchronisation continue en attente d’activation.' : 'Connexion continue aux sources : non activée.'}</small></span></div>
           <button type="button" className="vds360-refresh" onClick={onRefresh} disabled={loading}><RefreshCw size={13} className={loading ? 'vds360-spin' : ''} /><span>{loading ? 'Lecture…' : 'Actualiser'}</span></button>
         </div>
         <div className="vds360-layout">

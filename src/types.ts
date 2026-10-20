@@ -62,6 +62,7 @@ export interface Snapshot {
   links?: SourceLink[];
   sourceState?: SnapshotSourceState;
   enrichedClientIds?: string[];
+  moduleClientIds?: Partial<Record<RecordKind, string[]>>;
   connection: {
     mode: "offline" | "readonly-api";
     label: string;
