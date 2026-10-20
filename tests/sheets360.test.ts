@@ -4,7 +4,7 @@ import {mkdtemp,rm,readFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createHash,createHmac} from 'node:crypto';
-import {gzipSync} from 'node:zlib';
+import {gzipSync,brotliCompressSync} from 'node:zlib';
 import {createSheets360Store,buildSheetIndex,dossier360,type SheetsCapture} from '../server/railway/sheets360.js';
 import {openPrivateStorage} from '../server/railway/storage.js';
 import type {Snapshot} from '../src/types.js';
@@ -22,7 +22,8 @@ test('sheets360: rejects unsigned updates, unknown sources and missing dossier I
  assert.equal((await store.state()).captures[0].tables[0].values.length,2);
  const updated=structuredClone(initial);updated.readAt=new Date().toISOString();updated.tables[0].values[1][1]='Source changed';const reply=await store.receive(signed(updated));assert.equal(reply.status,200);
  const data=await reply.json();const receipt=await store.receive(signed({schemaVersion:'sheets-heartbeat-1',versions:[{id:initial.tables[0].id,digest:data.versions[initial.tables[0].id]}]}));assert.equal(receipt.status,200);
- const reopened=createSheets360Store(storage.bucket,envFor(initial));await reopened.bootstrap();assert.equal((await reopened.state()).captures[0].tables[0].values[1][1],'Source changed');
+ const compressed=envFor(initial);compressed.VDS_SHEETS_BOOTSTRAP_0=brotliCompressSync(JSON.stringify(initial)).toString('base64');
+ const reopened=createSheets360Store(storage.bucket,{...compressed,VDS_SHEETS_BOOTSTRAP_ENCODING:'brotli'});await reopened.bootstrap();assert.equal((await reopened.state()).captures[0].tables[0].values[1][1],'Source changed');
  }finally{await storage.close();await rm(root,{recursive:true,force:true});}
 });
 test('sheets360: all dossiers get the same sections; mismatches remain visible; name-only matches stay unassigned',()=>{

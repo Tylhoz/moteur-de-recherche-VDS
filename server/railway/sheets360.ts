@@ -1,5 +1,5 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
-import { gunzipSync } from 'node:zlib';
+import { gunzipSync, brotliDecompressSync } from 'node:zlib';
 import type { PrivateR2Bucket } from '../../worker/index.js';
 import type { Client, Snapshot, RecordKind } from '../../src/types.js';
 import type { PilotResponse, PilotDossier, PilotField, PilotSource } from '../../shared/pilot-contract.js';
@@ -77,7 +77,10 @@ export function createSheets360Store(bucket: PrivateR2Bucket, env: NodeJS.Proces
       const n=Number(env.VDS_SHEETS_BOOTSTRAP_CHUNKS||0);if(!n)return;
       if(!Number.isInteger(n)||n<1||n>180)throw Error('invalid_sheets_bootstrap');
       let encoded='';for(let i=0;i<n;i++){const v=env[`VDS_SHEETS_BOOTSTRAP_${i}`]??'';if(!/^[A-Za-z0-9+/=]+$/.test(v)||v.length>30000)throw Error('invalid_sheets_chunk');encoded+=v;}
-      const raw=gunzipSync(Buffer.from(encoded,'base64'),{maxOutputLength:8*1024*1024}).toString('utf8');
+      const compression=env.VDS_SHEETS_BOOTSTRAP_ENCODING||'gzip';
+      if(!['gzip','brotli'].includes(compression))throw Error('invalid_sheets_encoding');
+      const decode=compression==='brotli'?brotliDecompressSync:gunzipSync;
+      const raw=decode(Buffer.from(encoded,'base64'),{maxOutputLength:8*1024*1024}).toString('utf8');
       if(hash(raw)!==env.VDS_SHEETS_BOOTSTRAP_SHA256)throw Error('invalid_sheets_hash');
       // Idempotent startup: never let an old bootstrap overwrite later push updates.
       const marker=prefix+'bootstrap-'+hash(raw)+'.json';
