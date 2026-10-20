@@ -5,6 +5,11 @@ import {gzipSync,gunzipSync} from 'node:zlib';
 import { resolve, join } from 'node:path';
 import type { PrivateR2Bucket } from '../../worker/index.js';
 
+// A validated private volume with historical accounting versions can exceed
+// 128 MiB. Keep an explicit decompression bound, large enough for the current
+// 500 MB volume plus JSON escaping; retain every per-object integrity check.
+export const MAX_PRIVATE_ARCHIVE_BYTES=1024*1024*1024;
+
 /** One process/replica per mounted volume. Never put this directory under dist. */
 export async function openPrivateStorage(directory: string) {
   const root = resolve(directory);
@@ -56,13 +61,13 @@ export async function openPrivateStorage(directory: string) {
     const operation=queue.then(async()=>{await requireComplete();const entries:Record<string,{sha256:string;body:string}>={};
       for(const name of await readdir(root)){if(!/^[a-f0-9]{64}\.json$/.test(name))continue;
         const file=await open(join(root,name),constants.O_RDONLY|constants.O_NOFOLLOW);try{if((await file.stat()).size>4*1024*1024)throw Error('backup_object_limit');const body=await file.readFile('utf8');entries[name]={sha256:createHash('sha256').update(body).digest('hex'),body};}finally{await file.close();}}
-      const body=JSON.stringify({schemaVersion:'vds-volume-backup-1',createdAt:new Date().toISOString(),entries});return gzipSync(body);
+      const body=JSON.stringify({schemaVersion:'vds-volume-backup-1',createdAt:new Date().toISOString(),entries});if(Buffer.byteLength(body)>MAX_PRIVATE_ARCHIVE_BYTES)throw Error('backup_archive_limit');return gzipSync(body);
     });queue=operation.catch(()=>{});return operation;
   }
   async function restoreArchive(bytes:Buffer){
     const operation=queue.then(async()=>{
       if((await readdir(root)).some(n=>/^[a-f0-9]{64}\.json$/.test(n)))throw Error('restore_requires_empty_volume');
-      const data=JSON.parse(gunzipSync(bytes,{maxOutputLength:128*1024*1024}).toString('utf8'));
+      const data=JSON.parse(gunzipSync(bytes,{maxOutputLength:MAX_PRIVATE_ARCHIVE_BYTES}).toString('utf8'));
       if(data.schemaVersion!=='vds-volume-backup-1'||!data.entries||typeof data.entries!=='object'||Array.isArray(data.entries))throw Error('backup_invalid');
       const entries=Object.entries(data.entries) as [string,{sha256:string;body:string}][];
       if(!entries.length||entries.length>100000)throw Error('backup_invalid');
@@ -74,7 +79,7 @@ export async function openPrivateStorage(directory: string) {
     });queue=operation.catch(()=>{});return operation;
   }
   async function createCheckpoint(){
-    const bytes=await exportArchive();const decoded=JSON.parse(gunzipSync(bytes,{maxOutputLength:128*1024*1024}).toString('utf8'));
+    const bytes=await exportArchive();const decoded=JSON.parse(gunzipSync(bytes,{maxOutputLength:MAX_PRIVATE_ARCHIVE_BYTES}).toString('utf8'));
     const entries=Object.entries(decoded.entries) as [string,{sha256:string;body:string}][];
     for(const [,v]of entries)if(createHash('sha256').update(v.body).digest('hex')!==v.sha256)throw Error('checkpoint_verification_failed');
     if(!entries.length)return {objects:0,created:false};

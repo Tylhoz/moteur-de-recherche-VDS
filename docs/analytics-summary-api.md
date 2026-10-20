@@ -42,6 +42,12 @@ Le navigateur normalise les anomalies facultatives : lien absent ou non autoris�
 
 La limite de 256 Kio est contrôlée côté serveur. Un temps inférieur à 100 ms en 4G ne peut être garanti par cette taille : les mesures locales ne comprennent ni la latence réseau ni le démarrage du conteneur. Le contrôle préalable du volume au démarrage reste inchangé et peut retarder la disponibilité initiale.
 
+## Démarrage et taille de la sauvegarde privée
+
+Le contrôle de sauvegarde complet utilisait une limite de décompression de 128 Mio, indépendante du volume monté de 500 MB. Un volume valide de 132 Mio reproduit `ERR_BUFFER_TOO_LARGE` et empêchait l'ouverture du serveur. Cette limite est portée à 1 Gio pour la sauvegarde et sa restauration, avec une borne explicite à l'export ; les objets restent limités à 4 Mio, chaque empreinte SHA-256 reste vérifiée et toute restauration sur un volume non vide reste refusée. Aucun historique n'est supprimé. Cette limite interne ne modifie pas la réponse des graphiques, toujours plafonnée à 256 Kio.
+
+Les journaux de démarrage indiquent désormais l'étape fixe (`private_checkpoint`, configuration, import, etc.) et le code d'erreur autorisé, sans exception brute, chemin privé ou valeur de configuration. Le message générique de l'ancienne version ne permettait pas de confirmer le code précis sur Railway ; le défaut de taille est reproduit en test et le prochain démarrage doit encore être contrôlé. Le test `railway-checkpoint-size.test.ts` vérifie une sauvegarde dépassant 128 Mio, sa restauration complète et le refus d'écraser une destination non vide.
+
 Le contrat et le contrôle des liens sont partagés entre serveur et navigateur. Les erreurs de schéma indiquent un code et un chemin structurel ; les erreurs HTTP indiquent un endpoint fixe et un statut. Aucun journal applicatif ne reçoit les réponses brutes, les recherches, des noms clients, des clés API ou des URL avec jeton. Les pointages déclarés payés restent distincts des encaissements bancaires confirmés.
 
 ## Vérifications
