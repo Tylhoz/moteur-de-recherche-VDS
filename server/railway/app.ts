@@ -125,9 +125,13 @@ export function createRailwayApp(values: NodeJS.ProcessEnv, bucket: PrivateR2Buc
   let restoreFlight:Promise<void>|null=null,prepareFlight:Promise<void>|null=null;
   let prepareQueued=false,lastPrepared=0,cachePending=true,cacheError:string|null=null;
   let sourceError:string|null=null;
+  function reportAnalyticsCache(event:'analytics_cache_restored'|'analytics_cache_ready',cache:MaterializedAnalytics){
+    // Operational counts only: never output identities, amounts or source bodies.
+    console.log(JSON.stringify({event,schemaVersion:'business-analytics-2',dossiers:cache.data.profiles.length,documents:cache.data.documents.length,matchedDossiers:cache.data.financial.matchedDossiers.length,summaryBytes:{dossiers:Buffer.byteLength(JSON.stringify(cache.defaults.dossiers)),account:Buffer.byteLength(JSON.stringify(cache.defaults.account))},accountingReadAt:cache.accountingReadAt,sheetsReadAt:cache.sheetsReadAt}));
+  }
   async function restoreAnalyticsCache(){
     if(!restoreFlight)restoreFlight=(async()=>{
-      try{businessCache=await materialized.restore();}
+      try{businessCache=await materialized.restore();if(businessCache)reportAnalyticsCache('analytics_cache_restored',businessCache);}
       catch{cacheError='analytics_cache_invalid';console.error(JSON.stringify({event:'analytics_cache_restore_failed',code:cacheError}));}
     })();
     return restoreFlight;
@@ -166,7 +170,7 @@ export function createRailwayApp(values: NodeJS.ProcessEnv, bucket: PrivateR2Buc
           const defaults={account:checkedSummary(data,businessQuery({scope:'account'}),meta),dossiers:checkedSummary(data,businessQuery({}),meta)};
           const next:MaterializedAnalytics={key:revision,data,defaults,accountingReadAt:source.at,sheetsReadAt:current.readAt};
           await materialized.save(next); // Atomically switch only after the complete cache is durable.
-          businessCache=next;summaries.clear();
+          businessCache=next;summaries.clear();reportAnalyticsCache('analytics_cache_ready',next);
         }
         cachePending=false;cacheError=null;lastPrepared=Date.now();
       }catch{

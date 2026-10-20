@@ -48,6 +48,12 @@ Le contrôle de sauvegarde complet utilisait une limite de décompression de 128
 
 Les journaux de démarrage indiquent désormais l'étape fixe (`private_checkpoint`, configuration, import, etc.) et le code d'erreur autorisé, sans exception brute, chemin privé ou valeur de configuration. Le message générique de l'ancienne version ne permettait pas de confirmer le code précis sur Railway ; le défaut de taille est reproduit en test et le prochain démarrage doit encore être contrôlé. Le test `railway-checkpoint-size.test.ts` vérifie une sauvegarde dépassant 128 Mio, sa restauration complète et le refus d'écraser une destination non vide.
 
+### Renforcement de la récupération privée
+
+Le checkpoint est désormais écrit et vérifié en flux gzip : le JSON complet n'est plus assemblé en mémoire et ne dépend plus du plafond de chaîne Node d'environ 512 Mio. Le fichier reste un JSON v1 valide, avec une entrée par ligne ; les sauvegardes compactes v1 historiques restent lisibles avec une borne explicite. Une restauration est entièrement validée avant de créer le marqueur, puis écrite dans une seconde passe. Les temporaires sont retirés, les historiques conservés et les opérations restent sérialisées dans la queue du volume. Le scénario réel de 132 Mio passe aussi avec un heap Node limité à 96 Mio.
+
+Si seul le pointeur du cache dérivé est un JSON invalide, ses octets sont conservés dans une quarantaine privée immuable avant reconstruction. Une erreur I/O ou d'archivage bloque toujours la publication ; aucune source originale n'est modifiée. Des événements `analytics_cache_ready`/`analytics_cache_restored` exposent uniquement les compteurs, tailles de synthèse et dates des sources pour confirmer une préparation, sans identité ni montant.
+
 Le contrat et le contrôle des liens sont partagés entre serveur et navigateur. Les erreurs de schéma indiquent un code et un chemin structurel ; les erreurs HTTP indiquent un endpoint fixe et un statut. Aucun journal applicatif ne reçoit les réponses brutes, les recherches, des noms clients, des clés API ou des URL avec jeton. Les pointages déclarés payés restent distincts des encaissements bancaires confirmés.
 
 ## Vérifications

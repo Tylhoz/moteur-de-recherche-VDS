@@ -13,6 +13,19 @@ const compress=promisify(gzip),decompress=promisify(gunzip);
 export function createMaterializedAnalytics(bucket:PrivateR2Bucket,binding:string){
  const root='vds/private/analytics-materialized/'+digest(binding)+'/';
  async function read(key:string){const value=await bucket.get(root+key);return value?JSON.parse(await value.text()):null;}
+ async function previousForSave(){
+  const value=await bucket.get(root+'current.json');if(!value)return null;
+  const raw=await value.text();
+  try{return JSON.parse(raw);}catch(error){if(!(error instanceof SyntaxError))throw error;}
+  // Preserve the rejected derived pointer verbatim before publishing any replacement.
+  // Reads stay outside the parse catch so storage failures always stop the rebuild.
+  const key=root+'quarantine/current-'+digest(raw)+'.json';
+  if(await bucket.put(key,raw,{onlyIf:{etagDoesNotMatch:'*'}})===null){
+   const archived=await bucket.get(key);
+   if(!archived||await archived.text()!==raw)throw Error('analytics_cache_quarantine_failed');
+  }
+  return null;
+ }
  return {
   async save(cache:MaterializedAnalytics){
    const {data}=cache;
@@ -21,8 +34,8 @@ export function createMaterializedAnalytics(bucket:PrivateR2Bucket,binding:strin
    const payload=JSON.stringify({schemaVersion:'analytics-materialized-1',key:cache.key,profiles:data.profiles,documents:data.documents,options:data.options,periodLength:data.periodLength,financial:{totals:data.financial.totals,matchedDossiers:data.financial.matchedDossiers,paymentEntries:data.financial.paymentEntries,pendingAccounting:data.financial.pendingAccounting,overdue:data.financial.overdue,paymentEvidence:data.financial.paymentEvidence,limits:data.financial.limits},defaults});
    if(Buffer.byteLength(payload)>64*1024*1024)throw Error('analytics_cache_size_limit');
    const sha=digest(payload),compressed=(await compress(payload)).toString('base64');if(compressed.length>3*1024*1024)throw Error('analytics_cache_size_limit');
+   const previous=await previousForSave();
    await bucket.put(root+'versions/'+sha+'.json',JSON.stringify({encoding:'gzip-base64',sha,body:compressed}),{onlyIf:{etagDoesNotMatch:'*'}});
-   const previous=await read('current.json');
    await bucket.put(root+'current.json',JSON.stringify({schemaVersion:'analytics-materialized-1',sha,previous:previous?.sha!==sha?previous?.sha??null:previous?.previous??null,key:cache.key,accountingReadAt:cache.accountingReadAt,sheetsReadAt:cache.sheetsReadAt}));
    return {digest:sha,documents:data.documents.length,dossiers:data.profiles.length};
   },
