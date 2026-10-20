@@ -3,7 +3,8 @@ import { extname, resolve, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(fileURLToPath(new URL('../', import.meta.url)));
-const targetOrigin = 'https://moteur-de-recherche-vds.meert-val.workers.dev';
+const targetWorker = 'moteur-de-recherche-vds-prive';
+const targetOrigin = 'https://moteur-de-recherche-vds-prive.meert-val.workers.dev';
 const errors = [];
 const check = (condition, code) => { if (!condition) errors.push(code); };
 const allowedArgs = process.argv.slice(2);
@@ -13,7 +14,12 @@ let config, assetsChecked = 0, runtimeConfiguration = [];
 
 try {
   config = JSON.parse(await readFile(resolve(root, 'wrangler.jsonc'), 'utf8'));
-  check(config.name === 'moteur-de-recherche-vds', 'unexpected_worker_name');
+  check(config.name === targetWorker, 'unexpected_worker_name');
+  // Workers Builds can override the manifest's name when a branch is connected
+  // to another Worker. Never let that silently redirect this private release.
+  const ciWorkerOverride = process.env.WRANGLER_CI_OVERRIDE_NAME;
+  check(ciWorkerOverride === undefined || ciWorkerOverride === targetWorker, 'unsafe_ci_worker_override');
+  check(!process.env.CLOUDFLARE_ENV, 'alternate_cloudflare_environment_forbidden');
   check(config.main === 'worker/cloudflare.ts', 'authenticated_worker_entry_required');
   check(config.workers_dev === true && config.preview_urls === false, 'production_origin_only_required');
   check(config.keep_vars === true, 'dashboard_variables_must_be_preserved');
@@ -31,7 +37,7 @@ try {
   const packageJson = JSON.parse(await readFile(resolve(root, 'package.json'), 'utf8'));
   check(/^\d+\.\d+\.\d+$/.test(packageJson.devDependencies?.wrangler || ''), 'wrangler_version_must_be_pinned');
   const branch = process.env.WORKERS_CI_BRANCH || process.env.GITHUB_HEAD_REF || process.env.GITHUB_REF_NAME;
-  check(!branch || branch === 'feat/vds-live-portal-integration', 'unexpected_build_branch');
+  check(!branch || ['feat/vds-live-portal-integration', 'release/vds-private-production'].includes(branch), 'unexpected_build_branch');
   const dist = resolve(root, 'dist');
   check(await realpath(dist) === dist, 'asset_directory_symlink_forbidden');
   const allowedTypes = new Set(['.html', '.js', '.css', '.svg', '.png', '.jpg', '.jpeg', '.webp', '.ico', '.woff', '.woff2']);

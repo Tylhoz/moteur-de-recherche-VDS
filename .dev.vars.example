@@ -1,6 +1,6 @@
 # Exemple de configuration locale uniquement : aucune donnée client ni clé réelle.
 # Copier dans .dev.vars ignoré par Git. Ne jamais publier ce fichier rempli.
-VDS_PUBLIC_ORIGIN="https://moteur-de-recherche-vds.meert-val.workers.dev"
+VDS_PUBLIC_ORIGIN="https://moteur-de-recherche-vds-prive.meert-val.workers.dev"
 VDS_ACCESS_TEAM_DOMAIN=""
 VDS_ACCESS_AUD=""
 VDS_OWNER_EMAIL=""

@@ -1,6 +1,6 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
-  "name": "moteur-de-recherche-vds",
+  "name": "moteur-de-recherche-vds-prive",
   "main": "worker/cloudflare.ts",
   "compatibility_date": "2026-10-20",
   "workers_dev": true,
@@ -26,7 +26,7 @@
     }
   ],
   "vars": {
-    "VDS_PUBLIC_ORIGIN": "https://moteur-de-recherche-vds.meert-val.workers.dev",
+    "VDS_PUBLIC_ORIGIN": "https://moteur-de-recherche-vds-prive.meert-val.workers.dev",
     "VDS_RELEASE_ID": "vds-cloudflare-2026-10"
   }
 }
