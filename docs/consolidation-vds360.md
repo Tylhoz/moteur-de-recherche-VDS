@@ -58,3 +58,10 @@ Les dix vues métier proposent les filtres de période, modèle et statut. Une s
 ## Déploiement
 
 La branche de travail ne déclenche pas de publication : le service Railway existant reste épinglé à sa version validée. Toute publication en production exige l'accord explicite du propriétaire. Avant bascule, contrôler le checkpoint, les 510 identifiants, les notes et le statut réel des deux connexions. Une clé configurée ne constitue pas un test de connexion réussi.
+
+
+## Module Paiements facultatif
+
+Par défaut, le lecteur VosFactures importe uniquement les contacts et les factures. La validation atomique exige la réussite de ces deux collections ; l’absence du module Paiements ne bloque plus les graphiques de facturation. `VDS_VOSFACTURES_PAYMENTS_ENABLED=true` est une activation explicite réservée aux comptes utilisant ce module. Aucun appel à `/banking/payments.json` n’est effectué sans cette activation.
+
+Les anciennes versions de paiements sont conservées mais exclues des projections quand le module est désactivé. Le journal indique les collections effectivement lues. Les montants déclarés payés sur les factures sont affichés comme pointages, jamais comme preuve bancaire ; leur graphique est regroupé selon le mois de facturation, sans inventer une date d’encaissement.

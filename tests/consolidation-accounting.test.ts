@@ -10,7 +10,7 @@ import {accountingProjection} from '../server/railway/intelligence.js';
 import {openPrivateStorage} from '../server/railway/storage.js';
 import type {Client} from '../src/types.js';
 const c:Client={id:'VDS-001',client:'Essai CRM',contact:'contact@example.test +32470123456',address:'Rue Exemple 1',modelTeam:'',techMacon:'',finance:'',statusAction:'',category:'non_verifie',soldeAmount:null,contractHT:null};
-const env={VDS_INVOICING_PROVIDER:'vosfactures',VDS_VOSFACTURES_ENABLED:'true',VDS_VOSFACTURES_ACCOUNT:'private-test',VDS_VOSFACTURES_API_TOKEN:'test_secret_for_readonly_adapter'};
+const env={VDS_VOSFACTURES_PAYMENTS_ENABLED:'true',VDS_INVOICING_PROVIDER:'vosfactures',VDS_VOSFACTURES_ENABLED:'true',VDS_VOSFACTURES_ACCOUNT:'private-test',VDS_VOSFACTURES_API_TOKEN:'test_secret_for_readonly_adapter'};
 const field={id:'one',label:'Modèle',value:'Family 8',status:'documented' as const,sourceIds:['a'],note:null,sourceStatus:null,humanValidated:false as const};
 test('visual consolidation preserves originals and sources, separates financial documents and uncertain events',()=>{
  const original=[field,{...field,id:'two',label:'Modèle · observation Sheets',sourceIds:['b']}];const before=JSON.stringify(original),result=consolidateFields(original,'technique');assert.equal(result.length,1);assert.deepEqual(result[0].sourceIds,['a','b']);assert.equal(JSON.stringify(original),before);
@@ -58,7 +58,7 @@ test('VosFactures refuses a partial financial import and reports progress withou
    if(url.pathname==='/invoices.json'){assert.equal(store.progress()?.completedCollections,1);assert.equal(store.progress()?.recordsRead,1);throw {cause:{code:'UND_ERR_HEADERS_TIMEOUT'}};}
    return Response.json(url.searchParams.get('page')==='1'?[{id:1,name:'never_persist_in_progress'}]:[]);
   };
-  store=createVosFacturesStore(storage.bucket,env,request,async()=>{});
+  store=createVosFacturesStore(storage.bucket,{...env,VDS_VOSFACTURES_PAYMENTS_ENABLED:'false'},request,async()=>{});
   const result=await store.synchronize() as any;
   assert.equal(result.error,'provider_request_timeout');assert.equal(result.diagnostic.collection,'invoices');assert.equal(result.diagnostic.recordsRead,1);assert.equal(result.diagnostic.completedCollections,1);
   assert.equal((await store.state()).at,null);assert.deepEqual(await store.rows(),{clients:[],invoices:[],payments:[]});
@@ -77,4 +77,31 @@ test('private volume export restores every object to an empty volume and refuses
 test('commercial exceptions are versioned and never change source records or create accounting entries',async()=>{
  const {createCommercialRules}=await import('../server/railway/rules.js');const root=await mkdtemp(join(tmpdir(),'vds-rules-')),storage=await openPrivateStorage(root);
  try{const rules=createCommercialRules(storage.bucket),initial=await rules.read('VDS-001');assert.equal(initial.rule.depositRate,0.3);await rules.save('VDS-001',{depositRate:0.2,finalInvoiceLeadDays:10,reason:'Condition contractuelle spéciale',revision:initial.revision});assert.equal((await rules.read('VDS-001')).rule.depositRate,0.2);await assert.rejects(rules.save('VDS-001',{depositRate:2,finalInvoiceLeadDays:10,reason:'Invalide',revision:(await rules.read('VDS-001')).revision}),/invalid/);await assert.rejects(rules.save('VDS-001',{depositRate:0.4,finalInvoiceLeadDays:10,reason:'Ancienne version',revision:initial.revision}),/changed/);const checkpoint=await storage.createCheckpoint();assert.equal(checkpoint.created,true);assert.ok(checkpoint.objects>=3);}finally{await storage.close();await rm(root,{recursive:true,force:true});}
+});
+
+test('unused Payments module is never requested; invoices activate without claiming bank receipts',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'vds-no-payments-')),storage=await openPrivateStorage(root),calls:string[]=[];
+ const {VDS_VOSFACTURES_PAYMENTS_ENABLED:_unused,...withoutPayments}=env;
+ try{
+  const request:typeof fetch=async(input,init)=>{const u=new URL(String(input));calls.push(u.pathname);assert.equal(init?.method,'GET');assert.ok(!u.pathname.includes('banking'));
+   return Response.json(u.searchParams.get('page')!=='1'?[]:u.pathname==='/clients.json'?[{id:1,external_id:c.id}]:[{id:10,client_id:1,kind:'vat',income:'1',currency:'EUR',price_net:'100',price_gross:'121',paid:'121'}]);};
+  const store=createVosFacturesStore(storage.bucket,withoutPayments,request,async()=>{}),result=await store.synchronize() as any;
+  assert.equal(result.accepted,true);assert.equal(result.paymentsRead,false);assert.deepEqual(result.counts,{clients:1,invoices:1});assert.ok((await store.state()).at);assert.equal((await store.state()).error,null);
+  assert.deepEqual(new Set(calls),new Set(['/clients.json','/invoices.json']));
+  const rows=await store.rows(),projection=accountingProjection(rows,[c],'private-test');assert.deepEqual(rows.payments,[]);assert.equal(projection.ledger[0].paid,12100);assert.equal(projection.totals.invoicedGross,12100);assert.equal(projection.totals.received,null);
+  assert.deepEqual((await store.journal())[0].collections,['clients','invoices']);
+ }finally{await storage.close();await rm(root,{recursive:true,force:true});}
+});
+
+test('disabling Payments preserves archived records but excludes them from active financial projections',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'vds-preserve-payments-')),storage=await openPrivateStorage(root);
+ try{
+  const request:typeof fetch=async(input)=>{const u=new URL(String(input));return Response.json(u.searchParams.get('page')!=='1'?[]:[{id:1,kind:'vat',income:'1',currency:'EUR',price:'121',paid:'1'}]);};
+  const enabled=createVosFacturesStore(storage.bucket,env,request,async()=>{});assert.equal((await enabled.synchronize() as any).accepted,true);
+  const before=await enabled.state(),paymentDigests=Object.values(before.collections.payments);assert.equal(paymentDigests.length,1);
+  const disabled=createVosFacturesStore(storage.bucket,{...env,VDS_VOSFACTURES_PAYMENTS_ENABLED:'false'},async(input,init)=>{assert.ok(!String(input).includes('/banking/'));return request(input,init);},async()=>{});
+  assert.equal((await disabled.synchronize() as any).accepted,true);assert.deepEqual((await disabled.state()).collections.payments,before.collections.payments);assert.deepEqual((await disabled.rows()).payments,[]);
+  for(const digest of paymentDigests)assert.ok(await storage.bucket.get('vds/private/vosfactures/versions/'+digest+'.json'));
+  assert.equal((await enabled.rows()).payments.length,1);
+ }finally{await storage.close();await rm(root,{recursive:true,force:true});}
 });
