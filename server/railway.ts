@@ -49,7 +49,11 @@ async function start() {
   server.requestTimeout = 30_000; server.headersTimeout = 15_000; server.maxHeadersCount = 64;
   const port = Number(process.env.PORT || 3000);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('port_invalid');
-  const synchronizeAccounting=async()=>{const result=await app.accounting.synchronize() as {accepted?:boolean;error?:string;counts?:Record<string,number>};console.log(JSON.stringify({accountingReadOnly:true,accepted:result.accepted===true,error:result.error??null,counts:result.counts??null,...await app.auditSummary()}));};
+  const synchronizeAccounting=async()=>{
+    const result=await app.accounting.synchronize() as {accepted?:boolean;error?:string;counts?:Record<string,number>;diagnostic?:unknown};
+    console.log(JSON.stringify({accountingReadOnly:true,accepted:result.accepted===true,error:result.error??null,counts:result.counts??null,diagnostic:result.diagnostic??null}));
+    try{console.log(JSON.stringify({accountingProjection:true,...await app.auditSummary()}));}catch{console.error('VDS accounting projection unavailable; source results retained');}
+  };
   server.listen(port, '0.0.0.0', () => {console.log('VDS Railway server ready');if(app.accounting.configuration().enabled&&app.accounting.configuration().configured)void synchronizeAccounting().catch(()=>{});});
   const sync = setInterval(() => { void runScheduledSync(app.env).catch(() => {});if(app.accounting.configuration().enabled)void synchronizeAccounting().catch(()=>{}); }, 5 * 60_000);
   sync.unref();

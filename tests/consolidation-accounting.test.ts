@@ -23,8 +23,47 @@ test('matching requires corroboration, rejects name-only merges and conflicting 
 });
 test('VosFactures uses GET pagination across the full history; refuses partial imports and keeps last good records',async()=>{
  const root=await mkdtemp(join(tmpdir(),'vds-acc-'));const storage=await openPrivateStorage(root);let denied=false;const calls:{path:string;page:number}[]=[];
- const request:typeof fetch=async(input,init)=>{const u=new URL(String(input));assert.equal(init?.method,'GET');assert.equal(init?.redirect,'error');assert.equal(u.searchParams.get('period'),'all');assert.equal(u.searchParams.get('per_page'),'100');const page=Number(u.searchParams.get('page'));calls.push({path:u.pathname,page});if(denied&&u.pathname.includes('banking'))return new Response(null,{status:403});return Response.json(page>1?[]:[{id:1,name:'Essai',kind:'vat',income:'1',price_net:'100',price_gross:'121',paid:'0',api_token:'never_persist',updated_at:'2020-01-01T00:00:00Z'}]);};
+ const request:typeof fetch=async(input,init)=>{const u=new URL(String(input));assert.equal(init?.method,'GET');assert.equal(init?.redirect,'manual');assert.equal(u.searchParams.get('period'),'all');assert.equal(u.searchParams.get('per_page'),'100');const page=Number(u.searchParams.get('page'));calls.push({path:u.pathname,page});if(denied&&u.pathname.includes('banking'))return new Response(null,{status:403});return Response.json(page>1?[]:[{id:1,name:'Essai',kind:'vat',income:'1',price_net:'100',price_gross:'121',paid:'0',api_token:'never_persist',updated_at:'2020-01-01T00:00:00Z'}]);};
  try{const store=createVosFacturesStore(storage.bucket,env,request,async()=>{});assert.equal((await store.synchronize() as any).accepted,true);assert.ok(calls.some(c=>c.page===2));assert.equal((await store.rows()).invoices.length,1);assert.ok(!JSON.stringify(await store.rows()).includes('never_persist'));const at=(await store.state()).at;denied=true;assert.equal((await store.synchronize() as any).accepted,false);assert.equal((await store.state()).at,at);assert.equal((await store.rows()).invoices.length,1);assert.equal((await store.state()).error,'provider_access_denied');}finally{await storage.close();await rm(root,{recursive:true,force:true});}
+});
+test('VosFactures errors identify the failing stage without persisting tokens, URLs or raw exceptions',async()=>{
+ const cases:[string,()=>Promise<Response>][]=[
+  ['provider_dns_failed',async()=>{throw Object.assign(new TypeError('fetch https://example.test?api_token=never_persist'),{cause:{code:'ENOTFOUND',message:'never_persist'}});}],
+  ['provider_tls_failed',async()=>{throw {cause:{code:'CERT_HAS_EXPIRED',message:'never_persist'}};}],
+  ['provider_connection_failed',async()=>{throw {cause:{code:'ECONNRESET'}};}],
+  ['provider_request_timeout',async()=>{throw {cause:{code:'UND_ERR_CONNECT_TIMEOUT'}};}],
+  ['provider_redirect_refused',async()=>new Response(null,{status:302,headers:{Location:'https://untrusted.example.test/?api_token=never_persist'}})],
+  ['provider_endpoint_not_found',async()=>new Response(null,{status:404})],
+  ['provider_invalid_response',async()=>new Response('bad json never_persist',{headers:{'Content-Type':'application/json'}})],
+ ];
+ for(const [expected,response]of cases){
+  const root=await mkdtemp(join(tmpdir(),'vds-error-')),storage=await openPrivateStorage(root);let calls=0;
+  try{
+   const request:typeof fetch=async(_input,init)=>{calls++;assert.equal(init?.redirect,'manual');return response();};
+   const store=createVosFacturesStore(storage.bucket,env,request,async()=>{});
+   const result=await store.synchronize() as any;
+   assert.equal(result.error,expected);assert.equal(result.accepted,false);assert.equal(result.diagnostic.collection,'clients');assert.equal(result.diagnostic.page,1);assert.equal(result.diagnostic.recordsRead,0);assert.equal(calls,1,'No redirect is followed and credentials are never sent to a second host');
+   assert.equal((await store.state()).at,null);assert.deepEqual(await store.rows(),{clients:[],invoices:[],payments:[]});
+   assert.ok(!JSON.stringify(await store.journal()).includes('never_persist'));assert.ok(!JSON.stringify(await store.journal()).includes('https://'));
+   assert.equal(store.progress(),null);
+  }finally{await storage.close();await rm(root,{recursive:true,force:true});}
+ }
+});
+test('VosFactures refuses a partial financial import and reports progress without customer contents',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'vds-progress-')),storage=await openPrivateStorage(root);
+ try{
+  let store:ReturnType<typeof createVosFacturesStore>;
+  const request:typeof fetch=async(input)=>{
+   const url=new URL(String(input));
+   if(url.pathname==='/invoices.json'){assert.equal(store.progress()?.completedCollections,1);assert.equal(store.progress()?.recordsRead,1);throw {cause:{code:'UND_ERR_HEADERS_TIMEOUT'}};}
+   return Response.json(url.searchParams.get('page')==='1'?[{id:1,name:'never_persist_in_progress'}]:[]);
+  };
+  store=createVosFacturesStore(storage.bucket,env,request,async()=>{});
+  const result=await store.synchronize() as any;
+  assert.equal(result.error,'provider_request_timeout');assert.equal(result.diagnostic.collection,'invoices');assert.equal(result.diagnostic.recordsRead,1);assert.equal(result.diagnostic.completedCollections,1);
+  assert.equal((await store.state()).at,null);assert.deepEqual(await store.rows(),{clients:[],invoices:[],payments:[]});
+  assert.ok(!JSON.stringify(await store.journal()).includes('never_persist_in_progress'));
+ }finally{await storage.close();await rm(root,{recursive:true,force:true});}
 });
 test('financial calculations use cents and exclude ambiguous advance/final families and unproven receipts',()=>{
  assert.equal(cents('0.10')!+cents('0,20')!,30);assert.equal(cents('1.234,56'),null);assert.equal(cents('paid'),null);
