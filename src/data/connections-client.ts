@@ -3,7 +3,7 @@ import { AUTHENTICATION_REQUIRED_EVENT } from './api-client';
 export const API_NOT_DEPLOYED_MESSAGE = 'Interface publiée, API non déployée';
 export const MAX_PRIVATE_ARCHIVE_BYTES = 4 * 1024 * 1024;
 export interface SetupStatus {
-  schemaVersion: 'cloudflare-setup-1'; runtime: 'cloudflare-worker'; authentication: 'cloudflare-access';
+  schemaVersion: 'cloudflare-setup-1'; runtime: 'cloudflare-worker' | 'railway-node'; authentication: 'cloudflare-access' | 'owner-session';
   authenticated: true; ownerAuthorized: true; ready: boolean;
   configuration: { access: true; origin: true; assets: boolean; storage: boolean; importToken: boolean; expectedBundle: boolean; release: boolean };
   storage: { state: 'not_configured' | 'unavailable' | 'empty' | 'ready'; dossiers: number | null; enriched: number | null };
@@ -65,8 +65,8 @@ const count = (value: unknown) => value === null || (Number.isSafeInteger(value)
 const fail = (): never => { throw new ConnectionsError('invalid_response'); };
 
 export function validateSetup(value: unknown): SetupStatus {
-  if (!object(value) || value.schemaVersion !== 'cloudflare-setup-1' || value.runtime !== 'cloudflare-worker' ||
-      value.authentication !== 'cloudflare-access' || value.authenticated !== true || value.ownerAuthorized !== true ||
+  if (!object(value) || value.schemaVersion !== 'cloudflare-setup-1' || !((value.runtime === 'cloudflare-worker' && value.authentication === 'cloudflare-access') ||
+      (value.runtime === 'railway-node' && value.authentication === 'owner-session')) || value.authenticated !== true || value.ownerAuthorized !== true ||
       !bool(value.ready) || value.sourceWrites !== 0 || !object(value.configuration) || !object(value.storage) || !object(value.release) ||
       value.configuration.access !== true || value.configuration.origin !== true ||
       !['assets', 'storage', 'importToken', 'expectedBundle', 'release'].every(key => bool((value.configuration as Record<string, unknown>)[key])) ||

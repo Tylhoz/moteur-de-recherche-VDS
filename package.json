@@ -20,7 +20,10 @@
     "worker:export": "node --import tsx scripts/prepare-worker-data.ts",
     "worker:build": "npm run build && node scripts/build-worker.mjs",
     "worker:verify": "node scripts/verify-worker-artifact.mjs",
-    "build:site": "npm run worker:build && npm run worker:verify && node scripts/stage-worker.mjs"
+    "build:site": "npm run worker:build && npm run worker:verify && node scripts/stage-worker.mjs",
+    "build:railway": "node scripts/railway-build.mjs",
+    "start:railway": "sh scripts/start-railway.sh",
+    "railway:credentials": "node --import tsx scripts/railway-credentials.ts"
   },
   "dependencies": {
     "jose": "6.2.12",

@@ -161,7 +161,7 @@ export default function ConnectionsPanel({ links = [], lastReadAt, lastCheckedAt
     {setupError && <Failure error={setupError} />}
     {setup && <>
       <div className="connections-status-grid">
-        <article><ShieldCheck size={21} /><span>Authentification</span><strong>Accès propriétaire vérifié</strong><small>Cloudflare Access</small></article>
+        <article><ShieldCheck size={21} /><span>Authentification</span><strong>Accès propriétaire vérifié</strong><small>{setup.authentication === 'owner-session' ? 'Session privée VDS' : 'Cloudflare Access'}</small></article>
         <article><Database size={21} /><span>Dossiers privés</span><strong>{STORAGE_LABELS[setup.storage.state]}</strong>
           {setup.storage.state === 'ready' && <small>{setup.storage.dossiers?.toLocaleString('fr-FR')} dossiers · {setup.storage.enriched?.toLocaleString('fr-FR')} fiches enrichies</small>}
           {setup.storage.state !== 'ready' && <small>Les compteurs s’affichent après une lecture réussie.</small>}
@@ -169,7 +169,8 @@ export default function ConnectionsPanel({ links = [], lastReadAt, lastCheckedAt
         <article><Server size={21} /><span>Version du serveur</span><strong>{setup.release.id ?? 'Version non renseignée'}</strong>
           <small>{setup.release.commit ? <span title={setup.release.commit}>Commit {setup.release.commit.slice(0, 12)}</span> : 'Commit non renseigné'}</small></article>
       </div>
-      <p className="connections-environment"><span className={setup.ready ? 'is-ready' : ''} />{setup.ready ? 'Environnement prêt' : 'Préparation de l’environnement incomplète'} · Cloudflare Workers</p>
+      <p className="connections-environment"><span className={setup.ready ? 'is-ready' : ''} />{setup.ready ? 'Environnement prêt' : 'Préparation de l’environnement incomplète'} · {setup.runtime === 'railway-node' ? 'Railway' : 'Cloudflare Workers'}</p>
+      {setup.runtime === 'railway-node' && <form method="post" action="/auth/logout"><button className="connections-refresh" type="submit">Se déconnecter</button></form>}
     </>}
 
     {setup?.storage.state === 'empty' && <section className="connections-import" aria-labelledby="archive-import-title">
