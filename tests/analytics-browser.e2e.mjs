@@ -17,9 +17,12 @@ const server=createServer((req,res)=>{if(req.url==='/bundle.js'){res.setHeader('
 await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
 const browser=await chromium.launch({headless:true,executablePath:process.env.VDS_TEST_CHROMIUM_PATH||(existsSync('/usr/bin/chromium')?'/usr/bin/chromium':undefined),args:['--no-sandbox']});
 try{
- const page=await browser.newPage({viewport:{width:1024,height:768},isMobile:true,hasTouch:true});const errors=[];page.on('pageerror',e=>errors.push(e.message));let maxItems=0,maxSummary=0,denied=false;
- await page.route('**/api/v1/**',async route=>{if(denied)return route.fulfill({status:401,json:{error:'authentication_required'}});const url=new URL(route.request().url()),query=businessQuery(route.request().postDataJSON());let body;
+ const page=await browser.newPage({viewport:{width:1024,height:768},isMobile:true,hasTouch:true});const errors=[];page.on('pageerror',e=>errors.push(e.message));let maxItems=0,maxSummary=0,denied=false,failed=false;
+ await page.route('**/api/v1/**',async route=>{if(denied)return route.fulfill({status:401,json:{error:'authentication_required'}});if(failed)return route.fulfill({status:503,json:{error:'test_source_unavailable'}});const url=new URL(route.request().url()),query=businessQuery(route.request().postDataJSON());let body;
  if(url.pathname==='/api/v1/analytics/query'){body=summarizeBusiness(dataset,query,meta);maxSummary=Math.max(maxSummary,Buffer.byteLength(JSON.stringify(body)));}else if(url.pathname.endsWith('/documents')){body=pageBusinessDocuments(dataset,query,meta.revision);maxItems=Math.max(maxItems,body.items.length);}else body=pageBusinessDossiers(dataset,query,meta.revision);
+ // Missing optional source metadata must not blank out otherwise valid charts.
+ if(body.schemaVersion==='business-analytics-2')delete body.charts[0].note;
+ if(body.schemaVersion==='business-documents-1'&&body.items.length){delete body.items[0].url;body.items[0].gross='ambiguous';}
  await route.fulfill({status:200,json:body});});
  await page.goto('http://127.0.0.1:'+server.address().port+'/__analytics_test');await page.getByRole('heading',{name:'Pilotage métier · sources réelles'}).waitFor();
  await page.getByLabel('Périmètre des graphiques financiers').selectOption('account');await page.getByText('20 161 pièces',{exact:false}).waitFor();
@@ -28,7 +31,9 @@ try{
  await page.getByLabel('Rechercher une pièce ou un dossier').fill('TEST-20161');await page.getByRole('button',{name:'Rechercher',exact:true}).click();await page.waitForFunction(()=>document.querySelectorAll('.business360-documents article').length===1);assert.match(await page.locator('.business360-documents').textContent(),/TEST-20161/);
  await page.getByRole('button',{name:'Fermer',exact:true}).click();await page.locator('.business360-chart').filter({has:page.getByRole('heading',{name:'Facturation HTVA éligible',exact:true})}).getByRole('button').first().click();await page.waitForFunction(()=>document.querySelectorAll('.business360-documents article').length===50);
  const overflow=await page.evaluate(()=>document.documentElement.scrollWidth>window.innerWidth+2);assert.equal(overflow,false);assert.equal(errors.length,0);assert.ok(maxSummary<64*1024);assert.ok(maxItems<=50);
+ assert.ok(await page.getByText('Les valeurs sources restent conservées',{exact:false}).count()>0);
+ failed=true;await page.getByRole('button',{name:'Actualiser la synthèse',exact:true}).click();await page.getByText('Dernière synthèse complète affichée.',{exact:false}).waitFor();assert.equal(await page.locator('.business360-kpis').count(),1);failed=false;
  await page.setViewportSize({width:390,height:844});await page.waitForTimeout(200);assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>window.innerWidth+2),false);
  denied=true;await page.getByRole('button',{name:'Actualiser la synthèse',exact:true}).click();await page.waitForFunction(()=>!document.querySelector('.business360-kpis'));
- console.log(JSON.stringify({browser:'chromium',ipadAndPhone:true,paginationAndSearch:true,chartSources:true,authenticationPurgesData:true,maxSummaryBytes:maxSummary,maxDocumentsPerResponse:maxItems,pageErrors:errors.length}));
+ console.log(JSON.stringify({browser:'chromium',ipadAndPhone:true,paginationAndSearch:true,chartSources:true,optionalFieldsTolerated:true,lastGoodSummaryOnFailure:true,authenticationPurgesData:true,maxSummaryBytes:maxSummary,maxDocumentsPerResponse:maxItems,pageErrors:errors.length}));
 }finally{await browser.close();await new Promise(resolve=>server.close(()=>resolve()));}

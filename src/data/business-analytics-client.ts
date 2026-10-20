@@ -1,5 +1,6 @@
-import {BusinessSchemaError,validateBusinessSummary,validateBusinessPage,type BusinessQuery,type BusinessSummary,type BusinessPage,type BusinessDossierPage} from '../../shared/business-analytics-contract';
+import {BusinessSchemaError,type BusinessQuery,type BusinessSummary,type BusinessPage,type BusinessDossierPage} from '../../shared/business-analytics-contract';
 import {PortalApiError} from './api-client';
+import {normalizeBusinessSummary,normalizeBusinessPage} from '../../shared/business-analytics-normalize';
 async function read(path:string,query:Partial<BusinessQuery>,signal:AbortSignal,fetcher:typeof fetch){
  const timeout=AbortSignal.timeout(15000),combined=AbortSignal.any([signal,timeout]);
  let response:Response;
@@ -12,5 +13,6 @@ async function read(path:string,query:Partial<BusinessQuery>,signal:AbortSignal,
  return value;
 }
 function validated<T>(action:()=>T):T{try{return action();}catch(error){const path=error instanceof BusinessSchemaError?error.path:'schema';console.error('[VDS analytics]',{code:'analytics_schema_invalid',path});throw new PortalApiError('Les données d’analyse reçues ne sont pas exploitables ('+path+').');}}
-export async function readBusinessSummary(query:Partial<BusinessQuery>,signal:AbortSignal,fetcher:typeof fetch=fetch):Promise<BusinessSummary>{const value=await read('/api/v1/analytics/query',query,signal,fetcher);return validated(()=>validateBusinessSummary(value));}
-export async function readBusinessDetails(kind:'documents'|'dossiers',query:Partial<BusinessQuery>,signal:AbortSignal,fetcher:typeof fetch=fetch):Promise<BusinessPage|BusinessDossierPage>{const value=await read(kind==='documents'?'/api/v1/accounting360/documents':'/api/v1/analytics/dossiers',query,signal,fetcher);return validated(()=>validateBusinessPage(value,kind));}
+function diagnostic<T extends {quality?:{repaired:number;omitted:number}}>(value:T):T{if(value.quality&&(value.quality.repaired||value.quality.omitted))console.error('[VDS analytics]',{code:'analytics_optional_fields_normalized',...value.quality});return value;}
+export async function readBusinessSummary(query:Partial<BusinessQuery>,signal:AbortSignal,fetcher:typeof fetch=fetch):Promise<BusinessSummary>{const value=await read('/api/v1/analytics/query',query,signal,fetcher);return diagnostic(validated(()=>normalizeBusinessSummary(value)));}
+export async function readBusinessDetails(kind:'documents'|'dossiers',query:Partial<BusinessQuery>,signal:AbortSignal,fetcher:typeof fetch=fetch):Promise<BusinessPage|BusinessDossierPage>{const value=await read(kind==='documents'?'/api/v1/accounting360/documents':'/api/v1/analytics/dossiers',query,signal,fetcher);return diagnostic(validated(()=>normalizeBusinessPage(value,kind)));}

@@ -4,6 +4,7 @@ import { openPrivateStorage } from './railway/storage.js';
 import { createRailwayApp } from './railway/app.js';
 import { runScheduledSync } from '../worker/integration-router.js';
 import { bootstrapPrivateArchive } from './railway/bootstrap.js';
+import { backgroundSchedule } from './railway/background-schedule.js';
 
 async function start() {
   const root = resolve(process.env.VDS_PRIVATE_DATA_ROOT || '/data');
@@ -20,6 +21,7 @@ async function start() {
   if (archive) console.log(JSON.stringify({ privateArchiveReady: true, dossiers: archive.dossiers, enriched: archive.enriched }));
   const sheetImport = await app.sheets360.bootstrap();
   if (sheetImport) console.log(JSON.stringify({sheetsObservationsReady: true, ...sheetImport}));
+  await app.restoreAnalyticsCache();
   const server = createServer(async (incoming, outgoing) => {
     try {
       if (incoming.url === '/healthz' && ['GET', 'HEAD'].includes(incoming.method || '')) {
@@ -50,14 +52,24 @@ async function start() {
   const port = Number(process.env.PORT || 3000);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('port_invalid');
   const synchronizeAccounting=async()=>{
-    const result=await app.accounting.synchronize() as {accepted?:boolean;error?:string;counts?:Record<string,number>;diagnostic?:unknown};
-    console.log(JSON.stringify({accountingReadOnly:true,accepted:result.accepted===true,error:result.error??null,counts:result.counts??null,diagnostic:result.diagnostic??null}));
-    try{console.log(JSON.stringify({accountingProjection:true,...await app.auditSummary()}));}catch{console.error('VDS accounting projection unavailable; source results retained');}
+    try{
+      const result=await app.accounting.synchronize() as {accepted?:boolean;error?:string;counts?:Record<string,number>;diagnostic?:unknown};
+      console.log(JSON.stringify({accountingReadOnly:true,accepted:result.accepted===true,error:result.error??null,counts:result.counts??null,diagnostic:result.diagnostic??null}));
+    }finally{await app.prepareAnalytics();}
   };
-  server.listen(port, '0.0.0.0', () => {console.log('VDS Railway server ready');if(app.accounting.configuration().enabled&&app.accounting.configuration().configured)void synchronizeAccounting().catch(()=>{});});
-  const sync = setInterval(() => { void runScheduledSync(app.env).catch(() => {});if(app.accounting.configuration().enabled)void synchronizeAccounting().catch(()=>{}); }, 5 * 60_000);
-  sync.unref();
-  const stop = () => { clearInterval(sync); server.close(() => void storage.close().then(() => process.exit(0))); };
+  const schedule=backgroundSchedule(process.env);
+  const ingest=()=>{if(app.accounting.configuration().enabled&&app.accounting.configuration().configured)void schedule.run(synchronizeAccounting).catch(()=>{});};
+  server.listen(port, '0.0.0.0', () => {
+    console.log('VDS Railway server ready');
+    console.log(JSON.stringify({accountingBackgroundSchedule:schedule.mode,intervalSeconds:schedule.intervalSeconds,utcHour:schedule.utcHour}));
+    // Prepare the already stored sources independently of slow external APIs.
+    void app.prepareAnalytics();ingest();
+  });
+  const sync = setInterval(ingest,60_000);
+  const local = setInterval(()=>{void app.prepareAnalytics();},60_000);
+  const sheets = setInterval(()=>{void runScheduledSync(app.env).then(()=>app.prepareAnalytics()).catch(()=>{});},5*60_000);
+  sync.unref();local.unref();sheets.unref();
+  const stop = () => { clearInterval(sync);clearInterval(local);clearInterval(sheets); server.close(() => void storage.close().then(() => process.exit(0))); };
   process.once('SIGTERM', stop); process.once('SIGINT', stop);
 }
 start().catch(() => { console.error('VDS startup refused: verify private volume and required configuration'); process.exitCode = 1; });

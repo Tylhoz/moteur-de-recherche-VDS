@@ -14,6 +14,7 @@ import {validateBusinessSummary,BusinessSchemaError,type BusinessSummary} from '
 import { createVosFacturesStore } from './vosfactures.js';
 import { accountingProjection } from './intelligence.js';
 import { createMatchDecisions } from './approvals.js';
+import { createMaterializedAnalytics, type MaterializedAnalytics } from './materialized-analytics.js';
 import { consolidationStats, consolidateContradictions } from '../../shared/consolidation.js';
 import { handleReviewRequest } from '../../worker/review-router.js';
 import type { Snapshot } from '../../src/types.js';
@@ -95,7 +96,7 @@ export function createRailwayApp(values: NodeJS.ProcessEnv, bucket: PrivateR2Buc
   let financialFlight:{key:string;promise:Promise<FinancialProjection>}|null=null;
   const emptyFinancial=accountingProjection({clients:[],invoices:[],payments:[]},[],values.VDS_VOSFACTURES_ACCOUNT||'unconfigured');
   function financialKey(state:Awaited<ReturnType<typeof accounting.state>>,links:Awaited<ReturnType<typeof decisions.read>>,clients:Snapshot['clients']){
-    return createHash('sha256').update(JSON.stringify([state.collections,state.missing,accounting.configuration().paymentsEnabled,links,clients.map(c=>[c.id,c.contact,c.client,c.address])])).digest('hex');
+    return createHash('sha256').update(JSON.stringify([values.VDS_VOSFACTURES_ACCOUNT,state.collections,state.missing,accounting.configuration().paymentsEnabled,links,clients.map(c=>[c.id,c.contact,c.client,c.address])])).digest('hex');
   }
   async function financialView(clients:Snapshot['clients']):Promise<FinancialProjection>{
     const state=await accounting.state(),links=await decisions.read(),key=financialKey(state,links,clients);
@@ -117,27 +118,83 @@ export function createRailwayApp(values: NodeJS.ProcessEnv, bucket: PrivateR2Buc
     financialFlight={key,promise};
     try{return await promise;}catch(error){projectionError=error instanceof Error&&error.message==='accounting_version_invalid'?'accounting_version_invalid':'accounting_projection_failed';console.error(JSON.stringify({event:'accounting_projection_failed',code:projectionError}));throw error;}finally{if(financialFlight?.promise===promise)financialFlight=null;}
   }
-  let businessCache:{key:string;data:BusinessDataset;accountingReadAt:string|null;sheetsReadAt:string|null}|null=null;
+  // Binding prevents a cache from another account/owner/configuration being reused.
+  const materialized=createMaterializedAnalytics(bucket,JSON.stringify(['business-analytics-2',owner.toLowerCase(),values.VDS_VOSFACTURES_ACCOUNT||'',accounting.configuration().paymentsEnabled]));
+  let businessCache:MaterializedAnalytics|null=null;
   const summaries=new Map<string,BusinessSummary>();
+  let restoreFlight:Promise<void>|null=null,prepareFlight:Promise<void>|null=null;
+  let prepareQueued=false,lastPrepared=0,cachePending=true,cacheError:string|null=null;
+  let sourceError:string|null=null;
+  async function restoreAnalyticsCache(){
+    if(!restoreFlight)restoreFlight=(async()=>{
+      try{businessCache=await materialized.restore();}
+      catch{cacheError='analytics_cache_invalid';console.error(JSON.stringify({event:'analytics_cache_restore_failed',code:cacheError}));}
+    })();
+    return restoreFlight;
+  }
+  function requestAnalyticsPreparation(){
+    if(prepareQueued)return;
+    prepareQueued=true;
+    setImmediate(()=>{prepareQueued=false;if(prepareFlight)void prepareFlight.then(requestAnalyticsPreparation);else void prepareAnalytics();});
+  }
+  function checkedSummary(data:BusinessDataset,query:ReturnType<typeof businessQuery>,meta:BusinessSummary['meta']){
+    const summary=validateBusinessSummary(summarizeBusiness(data,query,meta));
+    if(Buffer.byteLength(JSON.stringify(summary))>256*1024)throw new BusinessSchemaError('summary_payload_limit');
+    return summary;
+  }
+  async function prepareAnalytics(){
+    if(prepareFlight)return prepareFlight;
+    prepareFlight=(async()=>{
+      await restoreAnalyticsCache();
+      try{
+        let current=await view();if(!current)throw new Error('private_sources_unavailable');
+        let source=await accounting.state();sourceError=source.error;
+        let expectedKey=financialKey(source,await decisions.read(),current.index.clients);
+        cachePending=!businessCache||financialCache?.key!==expectedKey;
+        const financial=await financialView(current.index.clients);
+        // A source may advance while immutable records are being read. Publish only
+        // a coherent revision, and schedule another pass if it changed meanwhile.
+        current=await view();if(!current)throw new Error('private_sources_unavailable');
+        source=await accounting.state();sourceError=source.error;
+        expectedKey=financialKey(source,await decisions.read(),current.index.clients);
+        if(financialCache?.key!==expectedKey||financialCache.data!==financial){cachePending=true;requestAnalyticsPreparation();return;}
+        const revision=createHash('sha256').update(current.state.digests.join(':')).update(current.active.digest).update(expectedKey).update(JSON.stringify((await decisions.read()).filter(l=>l.externalId.startsWith('sheet:')))).update(new Date().toISOString().slice(0,10)).digest('hex');
+        if(businessCache?.key===revision){businessCache.accountingReadAt=source.at;businessCache.sheetsReadAt=current.readAt;await materialized.updateDates(businessCache);}
+        else{
+          const data=buildBusinessDataset(current.index.clients,current.index.rows,financial);
+          const meta:BusinessSummary['meta']={revision,accountingReadAt:source.at,sheetsReadAt:current.readAt,projectionPending:false,refreshing:false,error:null,paymentsEnabled:accounting.configuration().paymentsEnabled,readOnly:true};
+          const defaults={account:checkedSummary(data,businessQuery({scope:'account'}),meta),dossiers:checkedSummary(data,businessQuery({}),meta)};
+          const next:MaterializedAnalytics={key:revision,data,defaults,accountingReadAt:source.at,sheetsReadAt:current.readAt};
+          await materialized.save(next); // Atomically switch only after the complete cache is durable.
+          businessCache=next;summaries.clear();
+        }
+        cachePending=false;cacheError=null;lastPrepared=Date.now();
+      }catch{
+        cacheError=projectionError||'analytics_cache_prepare_failed';cachePending=true;lastPrepared=Date.now();
+        console.error(JSON.stringify({event:'analytics_background_failed',code:cacheError,previousRetained:!!businessCache}));
+      }
+    })();
+    try{await prepareFlight;}finally{prepareFlight=null;}
+  }
   async function analyticsContext(){
-    const current=await view();if(!current)return null;
-    const source=await accounting.state(),key=financialKey(source,await decisions.read(),current.index.clients);
-    const ready=financialCache?.key===key;
-    // Never make a browser request wait for a full accounting reload.
-    if(!ready&&source.at)void financialView(current.index.clients).catch(()=>{});
-    const complete=ready?financialCache:null;
-    if(complete){const revision=createHash('sha256').update(current.state.digests.join(':')).update(current.active.digest).update(complete.key).update(JSON.stringify((await decisions.read()).filter(l=>l.externalId.startsWith('sheet:')))).digest('hex');
-      if(businessCache?.key!==revision){businessCache={key:revision,data:buildBusinessDataset(current.index.clients,current.index.rows,complete.data),accountingReadAt:source.at,sheetsReadAt:current.readAt};summaries.clear();}
-      else businessCache.accountingReadAt=source.at;
-    }
+    await restoreAnalyticsCache();
+    if(!prepareFlight&&(!lastPrepared||Date.now()-lastPrepared>=60000))requestAnalyticsPreparation();
     const stored=businessCache;
-    const data=stored?.data??buildBusinessDataset(current.index.clients,current.index.rows,emptyFinancial);
-    const revision=stored?.key??'preparing:'+current.revision;
-    const meta:BusinessSummary['meta']={revision,accountingReadAt:stored?.accountingReadAt??null,sheetsReadAt:stored?.sheetsReadAt??current.readAt,projectionPending:!!source.at&&!ready,refreshing:accounting.running()||!!source.at&&!ready,error:projectionError||source.error,paymentsEnabled:accounting.configuration().paymentsEnabled,readOnly:true};
-    return {data,meta,current,source};
+    // Warm requests never scan source records or contact providers. Even a broken
+    // new source leaves the last fully materialized dataset available here.
+    if(stored)return {data:stored.data,defaults:stored.defaults,meta:{revision:stored.key,accountingReadAt:stored.accountingReadAt,sheetsReadAt:stored.sheetsReadAt,projectionPending:cachePending,refreshing:accounting.running()||cachePending,error:cacheError||sourceError,paymentsEnabled:accounting.configuration().paymentsEnabled,readOnly:true} as BusinessSummary['meta']};
+    const current=await view();if(!current)return null;
+    const data=buildBusinessDataset(current.index.clients,current.index.rows,emptyFinancial);
+    const meta:BusinessSummary['meta']={revision:'preparing:'+current.revision,accountingReadAt:null,sheetsReadAt:current.readAt,projectionPending:true,refreshing:true,error:cacheError||projectionError,paymentsEnabled:accounting.configuration().paymentsEnabled,readOnly:true};
+    return {data,defaults:null,meta};
   }
   async function readAnalyticsQuery(request:Request){
-    if(request.method==='GET')return businessQuery({});
+    if(request.method==='GET'){
+      const url=new URL(request.url);if(url.pathname!=='/api/documents')return businessQuery({});
+      const query:Record<string,unknown>={scope:'account'};
+      for(const [key,value]of url.searchParams){if(!['page','limit'].includes(key)||url.searchParams.getAll(key).length!==1||!/^\d+$/.test(value))throw new BusinessQueryError('pagination');query[key==='limit'?'pageSize':'page']=Number(value);}
+      return businessQuery(query);
+    }
     if(request.method!=='POST')throw new BusinessQueryError('method');
     if(!request.headers.get('Content-Type')?.startsWith('application/json'))throw new BusinessQueryError('content_type');
     const body=await request.text();if(Buffer.byteLength(body)>8192)throw new BusinessQueryError('request_size');
@@ -145,9 +202,9 @@ export function createRailwayApp(values: NodeJS.ProcessEnv, bucket: PrivateR2Buc
   }
   async function route(request: Request): Promise<Response> {
     const url = new URL(request.url);
-    if (url.origin !== origin || /%|\\|\/\/|(?:^|\/)\.{1,2}(?:\/|$)/.test(url.pathname) || url.search) return json(400, { error: 'invalid_request' });
+    if (url.origin !== origin || /%|\\|\/\/|(?:^|\/)\.{1,2}(?:\/|$)/.test(url.pathname) || url.search&&url.pathname!=='/api/documents') return json(400, { error: 'invalid_request' });
     if (!['GET', 'HEAD', 'POST'].includes(request.method)) return json(405, { error: 'method_not_allowed' });
-    if (url.pathname === '/api/sheets-sync') return sheets360.receive(request);
+    if (url.pathname === '/api/sheets-sync') {const result=await sheets360.receive(request);if(result.ok)requestAnalyticsPreparation();return result;}
     if (request.method === 'POST' && request.headers.get('Origin') !== origin) return json(403, { error: 'same_origin_required' });
     if (url.pathname === '/auth/login') {
       if (request.method !== 'POST') return html(200);
@@ -194,7 +251,7 @@ export function createRailwayApp(values: NodeJS.ProcessEnv, bucket: PrivateR2Buc
         if(request.headers.get('X-VDS-Action')!=='synchronize')return json(400,{error:'explicit_sync_required'});
         const refresh=await sheets360.requestRefresh();
         if(!accounting.configuration().configured||!accounting.configuration().enabled)return json(202,{accepted:true,accounting:'not_configured',sheets:'refresh_requested_waiting_google_script',...refresh,sourceWrites:0});
-        void accounting.synchronize().catch(()=>{});return json(202,{accepted:true,state:'running',sourceWrites:0});
+        void accounting.synchronize().finally(requestAnalyticsPreparation).catch(()=>{});return json(202,{accepted:true,state:'running',sourceWrites:0});
       }
       if(request.method!=='GET')return json(405,{error:'method_not_allowed'});
       const current=await view();if(!current)return json(503,{error:'private_data_not_loaded'});const {active,index,state,continuous,revision,readAt}=current;
@@ -211,18 +268,20 @@ export function createRailwayApp(values: NodeJS.ProcessEnv, bucket: PrivateR2Buc
       if(typeof body.externalId!=='string'||typeof body.dossierId!=='string'||!current.index.clients.some(c=>c.id===body.dossierId))return json(400,{error:'invalid_match'});
       const row=body.externalId.startsWith('sheet:')?current.index.unmatched.find(r=>'sheet:'+r.sourceId===body.externalId)?.values:(await accounting.rows()).clients.find(r=>String(r.id)===body.externalId);
       if(!row)return json(409,{error:'external_source_changed'});
-      await decisions.save({externalId:body.externalId,dossierId:body.dossierId,externalDigest:createHash('sha256').update(JSON.stringify(row)).digest('hex'),at:new Date().toISOString(),actor:createHash('sha256').update(owner).digest('hex')});return json(200,{saved:true,sourceWrites:0});
+      await decisions.save({externalId:body.externalId,dossierId:body.dossierId,externalDigest:createHash('sha256').update(JSON.stringify(row)).digest('hex'),at:new Date().toISOString(),actor:createHash('sha256').update(owner).digest('hex')});requestAnalyticsPreparation();return json(200,{saved:true,sourceWrites:0});
     }
     if(url.pathname==='/api/v1/reviews'){const current=await view();return await handleReviewRequest(request,coreEnv,identity,async()=>current?.snapshot??null)??json(404,{error:'not_found'});}
     if(url.pathname.startsWith('/api/v1/sources360/version/')){if(request.method!=='GET')return json(405,{error:'method_not_allowed'});const version=await sheets360.version(url.pathname.split('/').at(-1)!);return version?json(200,version):json(404,{error:'version_not_found'});}
-    if(['/api/v1/analytics','/api/v1/intelligence360','/api/v1/analytics/query','/api/v1/accounting360/documents','/api/v1/analytics/dossiers'].includes(url.pathname)){
+    if(['/api/analyses','/api/documents','/api/v1/analytics','/api/v1/intelligence360','/api/v1/analytics/query','/api/v1/accounting360/documents','/api/v1/analytics/dossiers'].includes(url.pathname)){
       if(!['GET','POST'].includes(request.method))return json(405,{error:'method_not_allowed'});
       const query=await readAnalyticsQuery(request),context=await analyticsContext();if(!context)return json(503,{error:'private_data_not_loaded'});
       const {data,meta}=context;
-      if(url.pathname==='/api/v1/accounting360/documents')return json(200,{...pageBusinessDocuments(data,query,meta.revision),meta});
+      if(['/api/documents','/api/v1/accounting360/documents'].includes(url.pathname))return json(200,{...pageBusinessDocuments(data,query,meta.revision),meta});
       if(url.pathname==='/api/v1/analytics/dossiers')return json(200,{...pageBusinessDossiers(data,query,meta.revision),meta});
-      const cacheKey=JSON.stringify([meta,query,Math.floor(Date.now()/60000)]);let body=summaries.get(cacheKey);
-      if(!body){body=validateBusinessSummary(summarizeBusiness(data,query,meta));const bytes=Buffer.byteLength(JSON.stringify(body));if(bytes>256*1024)throw new BusinessSchemaError('summary_payload_limit');if(summaries.size>=30)summaries.delete(summaries.keys().next().value!);summaries.set(cacheKey,body);}
+      const cacheKey=JSON.stringify([meta.revision,query]);let body=summaries.get(cacheKey);
+      const isDefault=!query.year&&!query.from&&!query.to&&!query.model&&!query.status&&!query.financialStatus&&!query.search&&!query.chart&&!query.point;
+      if(!body){body=isDefault&&context.defaults?context.defaults[query.scope]:checkedSummary(data,query,meta);if(summaries.size>=30)summaries.delete(summaries.keys().next().value!);summaries.set(cacheKey,body);}
+      body={...body,meta};
       const response=json(200,body);response.headers.set('ETag','"'+createHash('sha256').update(JSON.stringify(body)).digest('hex')+'"');return response;
     }
     if(url.pathname==='/api/v1/accounting360'){
@@ -256,7 +315,7 @@ export function createRailwayApp(values: NodeJS.ProcessEnv, bucket: PrivateR2Buc
     const verified = authenticatedRequest(request, identity);
     return await handleIntegrationRequest(verified, env, identity) ?? await worker.fetch(verified, coreEnv);
   }
-  return { origin, env, sheets360, accounting, async auditSummary(){const current=await view();if(!current)return {dossiers:0};const financial=await financialView(current.index.clients);return {dossiers:current.index.clients.length,historicalAudited:current.active.bundle.pilots.length,matchedSheets:current.index.clients.filter(c=>current.index.rows.has(c.id)).length,matchedAccounting:financial.matchedDossiers.length,unassignedSourceRows:current.index.unmatched.length,sourceWrites:0};}, async fetch(request: Request) {
+  return { origin, env, sheets360, accounting, restoreAnalyticsCache, prepareAnalytics, async auditSummary(){const current=await view();if(!current)return {dossiers:0};const financial=await financialView(current.index.clients);return {dossiers:current.index.clients.length,historicalAudited:current.active.bundle.pilots.length,matchedSheets:current.index.clients.filter(c=>current.index.rows.has(c.id)).length,matchedAccounting:financial.matchedDossiers.length,unassignedSourceRows:current.index.unmatched.length,sourceWrites:0};}, async fetch(request: Request) {
     let response: Response;
     try { response = await route(request); } catch(error) { const queryError=error instanceof BusinessQueryError;const schemaError=error instanceof BusinessSchemaError;console.error(JSON.stringify({event:'private_api_error',code:queryError?error.code:schemaError?error.code:'private_service_unavailable',...(queryError||schemaError?{path:error.path}:{})}));response = json(queryError?400:503, { error:queryError?'analytics_query_invalid':'private_service_unavailable',...(queryError||schemaError?{diagnostic:error.path}:{}) }); }
     const headers = new Headers(response.headers);
