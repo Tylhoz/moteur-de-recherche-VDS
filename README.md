@@ -32,3 +32,5 @@ npm run worker:verify -- --private-bundle /chemin/prive/worker-preview.private.j
 Le serveur Workers est implémenté et compilable. **Aucune nouvelle version n'est publiée** : les connexions de l'environnement échouent avec EPERM avant Cloudflare, les helpers officiels de publication ne sont pas installés. Le binding R2 est déclaré, son provisionnement reste à vérifier au déploiement. La création d'un nouveau Site privé ne vaut pas publication. La synchronisation continue Google n'est pas connectée.
 
 La preuve des modifications, la séparation de V2 et la procédure de reprise se trouvent dans [docs/integration/workers-release.md](docs/integration/workers-release.md). Ne fournir un lien comme fonctionnel qu'après le déploiement et la vérification de la véritable version HTTPS.
+
+Déclenchement du déploiement Cloudflare — 20 octobre 2026
