@@ -62,7 +62,7 @@ export interface Snapshot {
   links?: SourceLink[];
   sourceState?: SnapshotSourceState;
   enrichedClientIds?: string[];
-  dataCoverage?: {historical:number;format360:number;sheetsRelated:number;sheetsContinuous:boolean;accountingRelated:number;accountingConnected:boolean;humanVerified:number};
+  dataCoverage?: {historical:number;format360:number;sheetsRelated:number;sheetsContinuous:boolean;accountingRelated:number;accountingProjectionPending?:boolean;accountingConnected:boolean;humanVerified:number};
   moduleClientIds?: Partial<Record<RecordKind, string[]>>;
   connection: {
     mode: "offline" | "readonly-api";

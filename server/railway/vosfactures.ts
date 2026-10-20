@@ -82,7 +82,26 @@ export function createVosFacturesStore(bucket:PrivateR2Bucket,env:NodeJS.Process
   throw Error('provider_page_limit');
  }
  return {state,progress:()=>running?diagnostic():null,async journal(){const s=await state();return Promise.all((s.runs??[]).slice(-50).reverse().map(id=>read(`runs/${id}.json`)));},configuration:()=>accountingConfiguration(env),running:()=>!!running,
-  async rows(){const s=await state();const out={clients:[],invoices:[],payments:[]} as Record<AccountingCollection,AccountingRow[]>;for(const k of (accountingConfiguration(env).paymentsEnabled?['clients','invoices','payments']:['clients','invoices']) as AccountingCollection[])for(const digest of Object.values(s.collections[k])){const value=await read(`versions/${digest}.json`);if(!value||sha(JSON.stringify(value))!==digest)throw Error('accounting_version_invalid');out[k].push({...value,...(s.missing?.[k]?.includes(String(value.id))?{_missingFromLatestFull:true}:{})});}return out;},
+  async rows(snapshot?:AccountingState){
+   const s=snapshot??await state();
+   const out={clients:[],invoices:[],payments:[]} as Record<AccountingCollection,AccountingRow[]>;
+   const kinds:AccountingCollection[]=accountingConfiguration(env).paymentsEnabled?['clients','invoices','payments']:['clients','invoices'];
+   const jobs=kinds.flatMap(kind=>Object.values(s.collections[kind]).map((digest,index)=>({kind,digest,index})));
+   const missing=Object.fromEntries(kinds.map(kind=>[kind,new Set(s.missing?.[kind]??[])]));
+   let cursor=0,failed=false;
+   // Bounded reads prevent one slow filesystem operation per document from
+   // delaying every API request; index positions preserve deterministic order.
+   const results=await Promise.allSettled(Array.from({length:Math.min(16,jobs.length)},async()=>{
+    while(!failed&&cursor<jobs.length){const {kind,digest,index}=jobs[cursor++];
+     try{const value=await read(`versions/${digest}.json`);
+      if(!value||sha(JSON.stringify(value))!==digest)throw Error('accounting_version_invalid');
+      out[kind][index]={...value,...(missing[kind].has(String(value.id))?{_missingFromLatestFull:true}:{})};
+     }catch(error){failed=true;throw error;}
+    }
+   }));
+   const failure=results.find((r):r is PromiseRejectedResult=>r.status==='rejected');if(failure)throw failure.reason;
+   return out;
+  },
   async synchronize(){if(running)return running;const configuration=accountingConfiguration(env);if(!configuration.configured||!configuration.enabled)return {accepted:false,error:'vosfactures_not_configured',sourceWrites:0};
    started=Date.now();progress={collection:null,page:0,recordsRead:0,completedCollections:0,elapsedMs:0};
    running=(async()=>{const before=await state(),attempt=new Date().toISOString(),controller=new AbortController(),timer=setTimeout(()=>controller.abort(),15*60000);const next=structuredClone(before);next.lastAttemptAt=attempt;const runId=sha(attempt+Math.random());const runKey=`runs/${runId}.json`;

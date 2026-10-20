@@ -63,20 +63,59 @@ export function createRailwayApp(values: NodeJS.ProcessEnv, bucket: PrivateR2Buc
   const commercialRules=createCommercialRules(bucket);
   let viewCache: {key: string; index: ReturnType<typeof buildSheetIndex>} | null = null;
   const identity = { email: owner.toLowerCase(), subject: 'vds-owner' };
+  let activeCache: Awaited<ReturnType<typeof readActive>> = null;
+  let activeFlight: Promise<Awaited<ReturnType<typeof readActive>>> | null = null;
+  async function activeView(){
+    // readActive still checks the pointer and hashes the private bytes on every read.
+    // Only the already validated projection is reused; concurrent reads share that work.
+    if(activeFlight)return activeFlight;
+    activeFlight=readActive(coreEnv,activeCache??undefined).then(active=>{activeCache=active;return active;});
+    try{return await activeFlight;}finally{activeFlight=null;}
+  }
   async function view(){
-    const active=await readActive(coreEnv);if(!active)return null;const state=await sheets360.state();const key=active.digest+':'+state.digests.join(':');
+    const active=await activeView();if(!active)return null;const state=await sheets360.state();const key=active.digest+':'+state.digests.join(':');
     if(!viewCache||viewCache.key!==key)viewCache={key,index:buildSheetIndex(state.captures,active.bundle.snapshot,state.historyCaptures)};
     const index={...viewCache.index,rows:new Map(viewCache.index.rows),unmatched:[...viewCache.index.unmatched]};
     const links=await decisions.read();for(const link of links.filter(l=>l.externalId.startsWith('sheet:'))){const row=index.unmatched.find(r=>'sheet:'+r.sourceId===link.externalId);if(row&&createHash('sha256').update(JSON.stringify(row.values)).digest('hex')===link.externalDigest&&index.clients.some(c=>c.id===link.dossierId)){index.rows.set(link.dossierId,[...(index.rows.get(link.dossierId)??[]),row]);index.unmatched=index.unmatched.filter(r=>r!==row);}}
     const receipts=Object.values(state.received),continuous=receipts.length>0&&receipts.every(r=>r.mode==='push'&&Date.now()-Date.parse(r.at)<180000);
     const readAt=receipts.length?receipts.map(r=>r.at).sort()[0]:active.bundle.snapshot.sourceState?.lastReadAt??null;
     const financialState=await accounting.state();
-    const revision=createHash('sha256').update(key).update(JSON.stringify(links)).update(JSON.stringify(financialState.collections)).digest('hex');
-    const snapshot:Snapshot={...active.bundle.snapshot,clients:index.clients,enrichedClientIds:index.clients.map(c=>c.id),moduleClientIds:index.modules,dataCoverage:{historical:active.bundle.pilots.length,format360:index.clients.length,sheetsRelated:index.clients.filter(c=>index.rows.has(c.id)).length,sheetsContinuous:continuous,accountingRelated:(await financialView(index.clients)).matchedDossiers.length,accountingConnected:!!financialState.at&&!financialState.error&&accounting.configuration().enabled,humanVerified:0},version:'sheets360:'+revision,fetchedAt:readAt||active.bundle.snapshot.fetchedAt,sourceState:{status:continuous?'ready':'not_connected',stale:!continuous,lastReadAt:readAt,lastAttemptAt:readAt,revision},connection:{mode:'readonly-api',intervalMs:30000,sheetReady:continuous,label:continuous?'Google Sheets · observations actualisées automatiquement':'Google Sheets · copie consultée · actualisation continue à activer'}};
+    const financialKeyValue=financialKey(financialState,links,index.clients);
+    const financialReady=financialCache?.key===financialKeyValue;
+    const projectionPending=!!financialState.at&&accounting.configuration().enabled&&!financialReady;
+    // Loading the dossier list or source status must never wait for 29,000 accounting objects.
+    if(projectionPending)void financialView(index.clients).catch(()=>{});
+    const revision=createHash('sha256').update(key).update(JSON.stringify(links)).update(JSON.stringify(financialState.collections)).update(projectionPending?'pending':'ready').digest('hex');
+    const snapshot:Snapshot={...active.bundle.snapshot,clients:index.clients,enrichedClientIds:index.clients.map(c=>c.id),moduleClientIds:index.modules,dataCoverage:{historical:active.bundle.pilots.length,format360:index.clients.length,sheetsRelated:index.clients.filter(c=>index.rows.has(c.id)).length,sheetsContinuous:continuous,accountingRelated:financialReady?financialCache!.data.matchedDossiers.length:0,accountingProjectionPending:projectionPending,accountingConnected:!!financialState.at&&!financialState.error&&accounting.configuration().enabled,humanVerified:0},version:'sheets360:'+revision,fetchedAt:readAt||active.bundle.snapshot.fetchedAt,sourceState:{status:continuous?'ready':'not_connected',stale:!continuous,lastReadAt:readAt,lastAttemptAt:readAt,revision},connection:{mode:'readonly-api',intervalMs:30000,sheetReady:continuous,label:continuous?'Google Sheets · observations actualisées automatiquement':'Google Sheets · copie consultée · actualisation continue à activer'}};
     return {active,state,index,readAt,continuous,revision,snapshot};
   }
-  let financialCache:{key:string;data:ReturnType<typeof accountingProjection>}|null=null;
-  async function financialView(clients:Snapshot['clients']){const state=await accounting.state(),links=await decisions.read();const key=createHash('sha256').update(JSON.stringify([state.collections,state.missing,accounting.configuration().paymentsEnabled,links,clients.map(c=>[c.id,c.contact,c.client,c.address])])).digest('hex');if(financialCache?.key===key)return financialCache.data;const rows=await accounting.rows(),approved:Record<string,string>={};for(const link of links){const row=rows.clients.find(r=>String(r.id)===link.externalId);if(row&&createHash('sha256').update(JSON.stringify(row)).digest('hex')===link.externalDigest)approved[link.externalId]=link.dossierId;}const data=accountingProjection(rows,clients,values.VDS_VOSFACTURES_ACCOUNT||'unconfigured',approved);financialCache={key,data};return data;}
+  type FinancialProjection=ReturnType<typeof accountingProjection>;
+  let financialCache:{key:string;data:FinancialProjection}|null=null;
+  let financialFlight:{key:string;promise:Promise<FinancialProjection>}|null=null;
+  const emptyFinancial=accountingProjection({clients:[],invoices:[],payments:[]},[],values.VDS_VOSFACTURES_ACCOUNT||'unconfigured');
+  function financialKey(state:Awaited<ReturnType<typeof accounting.state>>,links:Awaited<ReturnType<typeof decisions.read>>,clients:Snapshot['clients']){
+    return createHash('sha256').update(JSON.stringify([state.collections,state.missing,accounting.configuration().paymentsEnabled,links,clients.map(c=>[c.id,c.contact,c.client,c.address])])).digest('hex');
+  }
+  async function financialView(clients:Snapshot['clients']):Promise<FinancialProjection>{
+    const state=await accounting.state(),links=await decisions.read(),key=financialKey(state,links,clients);
+    if(financialCache?.key===key)return financialCache.data;
+    if(financialFlight){
+      if(financialFlight.key===key)return financialFlight.promise;
+      // A newer source revision waits for the existing reader, then reads the current state.
+      // There is never one full disk scan per concurrent browser request.
+      await financialFlight.promise.catch(()=>{});
+      return financialView(clients);
+    }
+    const promise=(async()=>{
+      const rows=await accounting.rows(state),approved:Record<string,string>={};
+      const byId=new Map(rows.clients.map(row=>[String(row.id),row]));
+      for(const link of links){const row=byId.get(link.externalId);if(row&&createHash('sha256').update(JSON.stringify(row)).digest('hex')===link.externalDigest)approved[link.externalId]=link.dossierId;}
+      const data=accountingProjection(rows,clients,values.VDS_VOSFACTURES_ACCOUNT||'unconfigured',approved);
+      financialCache={key,data};return data;
+    })();
+    financialFlight={key,promise};
+    try{return await promise;}finally{if(financialFlight?.promise===promise)financialFlight=null;}
+  }
   async function route(request: Request): Promise<Response> {
     const url = new URL(request.url);
     if (url.origin !== origin || /%|\\|\/\/|(?:^|\/)\.{1,2}(?:\/|$)/.test(url.pathname) || url.search) return json(400, { error: 'invalid_request' });
@@ -101,7 +140,7 @@ export function createRailwayApp(values: NodeJS.ProcessEnv, bucket: PrivateR2Buc
       json(200, { runtime: 'railway-node', authentication: 'owner-session', release: env.VDS_RELEASE_ID, commit, authenticated: true });
     if (url.pathname === '/api/v1/setup') {
       if (request.method === 'POST') return json(405, { error: 'method_not_allowed' });
-      const active = await readActive(coreEnv);
+      const active = await activeView();
       const sheetState = await sheets360.state();
       const sheetIndex = active && sheetState.captures.length ? buildSheetIndex(sheetState.captures, active.bundle.snapshot) : null;
       return json(200, {
@@ -132,10 +171,12 @@ export function createRailwayApp(values: NodeJS.ProcessEnv, bucket: PrivateR2Buc
       }
       if(request.method!=='GET')return json(405,{error:'method_not_allowed'});
       const current=await view();if(!current)return json(503,{error:'private_data_not_loaded'});const {active,index,state,continuous,revision,readAt}=current;
-      const financial=await financialView(index.clients),accountingState=await accounting.state();
+      const accountingState=await accounting.state(),currentFinancialKey=financialKey(accountingState,await decisions.read(),index.clients);
+      const projectionPending=financialCache?.key!==currentFinancialKey&&!!accountingState.at;
+      const financial=financialCache?.key===currentFinancialKey?financialCache.data:emptyFinancial;
       const fiches=index.clients.map(c=>dossier360(c,index.rows.get(c.id)??[],active.bundle.pilots.find(p=>p.data.id===c.id),revision,readAt,continuous));
       const stats=fiches.map(f=>consolidationStats(f.data));
-      return json(200,{schemaVersion:'sync360-1',revision,dossiers:index.clients.length,historicalEnriched:active.bundle.pilots.length,format360:fiches.length,sheetsRelated:index.clients.filter(c=>index.rows.has(c.id)).length,accountingRelated:financial.matchedDossiers.length,humanVerified:0,sheets:{continuous,lastReadAt:readAt,workbooks:state.captures.length,tabs:state.captures.flatMap(c=>c.tables).length,history:await sheets360.history(),refreshRequest:await sheets360.refreshStatus()},accounting:{...accounting.configuration(),running:accounting.running(),progress:accounting.progress(),connected:!!accountingState.at&&!accountingState.error&&accounting.configuration().enabled,lastReadAt:accountingState.at,lastAttemptAt:accountingState.lastAttemptAt,error:accountingState.error,sourceWrites:0,journal:await accounting.journal()},consolidated:stats.reduce((n,s)=>n+s.fields+s.events+s.conflicts,0),conflicts:fiches.reduce((n,f)=>n+consolidateContradictions(f.data.contradictions).length,0),rawConflicts:fiches.reduce((n,f)=>n+f.data.contradictions.length,0),matches:financial.matches,unassignedSheets:index.unmatched.map(r=>({id:'sheet:'+r.sourceId,table:r.table.tab,row:r.row,name:r.values.Client||null,url:`https://docs.google.com/spreadsheets/d/${r.table.id}/edit#gid=${r.table.gid}&range=A${r.row}:Z${r.row}`})),validatedLinks:(await decisions.read()).length});
+      return json(200,{schemaVersion:'sync360-1',revision,dossiers:index.clients.length,historicalEnriched:active.bundle.pilots.length,format360:fiches.length,sheetsRelated:index.clients.filter(c=>index.rows.has(c.id)).length,accountingRelated:financial.matchedDossiers.length,humanVerified:0,sheets:{continuous,lastReadAt:readAt,workbooks:state.captures.length,tabs:state.captures.flatMap(c=>c.tables).length,history:await sheets360.history(),refreshRequest:await sheets360.refreshStatus()},accounting:{...accounting.configuration(),projectionPending,running:accounting.running(),progress:accounting.progress(),connected:!!accountingState.at&&!accountingState.error&&accounting.configuration().enabled,lastReadAt:accountingState.at,lastAttemptAt:accountingState.lastAttemptAt,error:accountingState.error,sourceWrites:0,journal:await accounting.journal()},consolidated:stats.reduce((n,s)=>n+s.fields+s.events+s.conflicts,0),conflicts:fiches.reduce((n,f)=>n+consolidateContradictions(f.data.contradictions).length,0),rawConflicts:fiches.reduce((n,f)=>n+f.data.contradictions.length,0),matches:financial.matches,unassignedSheets:index.unmatched.map(r=>({id:'sheet:'+r.sourceId,table:r.table.tab,row:r.row,name:r.values.Client||null,url:`https://docs.google.com/spreadsheets/d/${r.table.id}/edit#gid=${r.table.gid}&range=A${r.row}:Z${r.row}`})),validatedLinks:(await decisions.read()).length});
     }
     if(url.pathname==='/api/v1/matching/approve'){
       if(request.method!=='POST'||request.headers.get('X-VDS-Action')!=='approve-link')return json(400,{error:'explicit_matching_required'});
