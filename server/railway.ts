@@ -3,6 +3,7 @@ import { resolve, relative } from 'node:path';
 import { openPrivateStorage } from './railway/storage.js';
 import { createRailwayApp } from './railway/app.js';
 import { runScheduledSync } from '../worker/integration-router.js';
+import { bootstrapPrivateArchive } from './railway/bootstrap.js';
 
 async function start() {
   const root = resolve(process.env.VDS_PRIVATE_DATA_ROOT || '/data');
@@ -12,6 +13,9 @@ async function start() {
   if (process.env.VDS_VOLUME_LOCKED !== 'true') throw new Error('start_with_volume_lock');
   const storage = await openPrivateStorage(root);
   const app = createRailwayApp(process.env, storage.bucket, dist);
+  const archive = await bootstrapPrivateArchive({ ...app.env, BUCKET: storage.bucket, ASSETS: app.env.ASSETS!,
+    VDS_PUBLIC_ORIGIN: app.origin, VDS_OWNER_PRIVATE: 'true' }, process.env);
+  if (archive) console.log(JSON.stringify({ privateArchiveReady: true, dossiers: archive.dossiers, enriched: archive.enriched }));
   const server = createServer(async (incoming, outgoing) => {
     try {
       if (incoming.url === '/healthz' && ['GET', 'HEAD'].includes(incoming.method || '')) {
