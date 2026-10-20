@@ -2,9 +2,7 @@
 FROM node:22-bookworm-slim AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN --mount=type=secret,id=proxy_ca \
-    if [ -f /run/secrets/proxy_ca ]; then export NODE_EXTRA_CA_CERTS=/run/secrets/proxy_ca; fi; \
-    npm ci --strict-ssl=true
+RUN npm ci --include=dev --strict-ssl=true
 # .dockerignore is an allowlist: no .git, private data, tests, or local secrets.
 COPY . ./
 ARG RAILWAY_GIT_COMMIT_SHA
