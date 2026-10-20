@@ -1,0 +1,6 @@
+/*
+  Cache-Control: private, no-store
+  X-Robots-Tag: noindex, nofollow, nosnippet
+  Referrer-Policy: no-referrer
+  X-Content-Type-Options: nosniff
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'self'; form-action 'self'

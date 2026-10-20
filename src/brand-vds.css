@@ -1,0 +1,109 @@
+/* Palette read from the VDS Pools logo supplied in the conversation.
+   The logo asset itself is never reconstructed from these colours. */
+:root {
+  --vds-yellow: #ffca05;
+  --vds-blue: #235d9d;
+  --vds-navy: #1b3673;
+  --vds-pale-blue: #edf4fc;
+  --vds-pale-yellow: #fff8dc;
+  --brand-gold: var(--vds-yellow);
+  --brand-graphite: var(--vds-navy);
+  --teal: var(--vds-blue);
+  --teal-dark: var(--vds-navy);
+  --navy: var(--vds-navy);
+  --bg: #f4f7fc;
+}
+body { background: radial-gradient(ellipse at 85% 0, #e8f0fc, transparent 48%), var(--bg); }
+.app-shell .sidebar {
+  background: linear-gradient(160deg, #203f80, #142c60 80%);
+  border-right-color: #10244d;
+  box-shadow: 7px 0 30px #1b36730d;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+.app-shell .brand { width: 100%; justify-content: flex-start; padding: 0 0 20px; flex-shrink: 0; }
+.app-shell .vds-original-logo {
+  display: block;
+  width: 100%;
+  max-width: 208px;
+  overflow: hidden;
+  border-radius: 12px;
+  background: #fff;
+}
+.app-shell .vds-original-logo img {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 142px;
+  object-fit: contain;
+}
+.app-shell .vds-brand-wordmark { display: flex; align-items: baseline; gap: 9px; padding: 8px 0 12px; color: white; }
+.app-shell .vds-brand-wordmark strong { color: #fff; font-size: 31px; letter-spacing: -.6px; }
+.app-shell .vds-brand-wordmark > span { color: #fff; font-size: 21px; letter-spacing: 2px; font-weight: 300; }
+.app-shell .workspace-dot, .app-shell .nav-indicator { background: var(--vds-yellow); }
+.app-shell .workspace-label { color: #e2eafa; }
+.app-shell .nav-caption { color: #acbfdf; }
+.app-shell .nav-item { color: #dce8fa; }
+.app-shell .nav-item:hover { color: #fff; background: #ffffff12; }
+.app-shell .nav-item.active { color: #152b5a; background: var(--vds-yellow); box-shadow: 0 4px 16px #0d204733; }
+.app-shell .nav-item.active .nav-count { color: #1b3673; background: #1b367317; }
+.app-shell .source-card { background: #ffffff08; border-color: #b5ccf02a; }
+.app-shell .source-card p, .app-shell .sidebar-profile small { color: #c2d2eb; }
+.app-shell .source-card button, .app-shell .source-icon { color: #ffe166; }
+.app-shell .profile-avatar { color: var(--vds-yellow); background: #ffca0517; border-color: #ffca0545; }
+.app-shell .topbar-avatar { color: var(--vds-navy); background: #edf3fc; border-color: #d5e1f5; }
+.app-shell .mobile-bottom-nav button.active { color: var(--vds-navy); background: var(--vds-pale-yellow); }
+.app-shell .button-primary { background: var(--vds-blue); border-color: var(--vds-blue); color: #fff; }
+.app-shell button:focus-visible, .app-shell a:focus-visible { outline-color: var(--vds-blue); }
+.app-shell .premium-dashboard {
+  --pdash-ink: var(--vds-navy);
+  --pdash-gold: var(--vds-yellow);
+  --pdash-aqua: var(--vds-blue);
+}
+.app-shell .pdash-heading h1, .app-shell .pdash-panel h2, .app-shell .pdash-kpi-value { color: var(--vds-navy); }
+.app-shell .pdash-tone-blue, .app-shell .pdash-tone-purple { background: linear-gradient(140deg, #fff, #f0f5fd); }
+.app-shell .pdash-tone-aqua { background: linear-gradient(140deg, #fff, #eaf4fb); }
+.app-shell .pdash-tone-gold { background: linear-gradient(140deg, #fff, #fff9e0); }
+.app-shell .pdash-tone-blue .pdash-icon, .app-shell .pdash-tone-purple .pdash-icon { color: var(--vds-navy); background: #e7eefb; }
+.app-shell .pdash-tone-aqua .pdash-icon { color: var(--vds-blue); background: #e3f0fa; }
+.app-shell .pdash-tone-gold .pdash-icon { color: #725400; background: #fff1af; }
+.app-shell .pdash-kpi:hover { border-color: #bdcfea; box-shadow: 0 12px 30px #1b367311; }
+.app-shell .pdash-kpi:hover .pdash-kpi-arrow { color: var(--vds-navy); background: #ffca0540; }
+.app-shell .pdash-outline-button:hover, .app-shell .pdash-icon-button:hover { border-color: #e7c944; background: #fff9df; }
+.app-shell .pdash-donut-value { stroke: var(--vds-blue); }
+.app-shell .pdash-donut-track { stroke: #dce8f8; }
+.app-shell .pdash-donut-center strong { color: var(--vds-navy); }
+.app-shell .pdash-legend-aqua { background: var(--vds-blue); }
+.app-shell .pdash-legend-pale { background: #dce8f8; }
+.app-shell .pdash-bar-graphite { --bar-color: var(--vds-navy); }
+.app-shell .pdash-bar-aqua { --bar-color: var(--vds-blue); }
+.app-shell .pdash-bar-gold { --bar-color: var(--vds-yellow); }
+.app-shell .pdash-activity { background: linear-gradient(140deg, #1b3673, #235d9d); color: #fff; }
+.app-shell .pdash-activity h2 { color: #fff; }
+.app-shell .pdash-activity-icon { color: var(--vds-yellow); background: #ffffff0d; border-color: #ffffff33; }
+.app-shell .pdash-activity .pdash-section-kicker, .app-shell .pdash-activity-description, .app-shell .pdash-activity-footnote { color: #e2ebfb; }
+.app-shell .pdash-activity-button { background: var(--vds-yellow); color: #173266 !important; border-color: var(--vds-yellow); }
+.app-shell .pdash-activity-button:hover { background: #ffdc52; border-color: #ffdc52; }
+.app-shell .pdash-activity-decoration span { border-color: #ffffff12; }
+.app-shell .analysis-heading h1, .app-shell .analysis-stat > strong, .app-shell .analysis-chart-card h2, .app-shell .analysis-detail-heading h2 { color: var(--vds-navy); }
+.app-shell .analysis-eyebrow > span { background: var(--vds-yellow); }
+.app-shell .analysis-tabs button[aria-current="page"] { color: var(--vds-navy); border-color: #cbdcf4; box-shadow: inset 0 -3px var(--vds-yellow); }
+.app-shell .analysis-stat.violet { background: linear-gradient(135deg, #fff, #edf2fc); }
+.app-shell .analysis-stat.violet svg { color: var(--vds-navy); }
+.app-shell .analysis-stat.aqua { background: linear-gradient(135deg, #fff, #edf6fc); }
+.app-shell .analysis-stat.aqua svg { color: var(--vds-blue); }
+.app-shell .analysis-stat.gold { background: linear-gradient(135deg, #fff, #fff8d9); }
+.app-shell .analysis-stat.gold svg { color: #977100; }
+.app-shell .analysis-chart-card:nth-child(4n+1) { background: linear-gradient(160deg, #fff 25%, #f0f6fd); }
+.app-shell .analysis-chart-card:nth-child(4n+2) { background: linear-gradient(160deg, #fff 25%, #f4f6fc); }
+.app-shell .analysis-open-client { color: var(--vds-blue); }
+.vds360-panel.vds360-panel { --vds-detail-graphite: var(--vds-navy); --vds-detail-gold: var(--vds-yellow); --vds-detail-aqua: var(--vds-blue); }
+.vds360-panel .vds360-avatar { color: var(--vds-yellow); background: linear-gradient(145deg, #235d9d, #1b3673); border-color: #21427c; }
+.vds360-panel .vds360-heading h2, .vds360-panel .vds360-section-heading h3 { color: var(--vds-navy); }
+.vds360-panel .vds360-tab.is-active { color: #173266; background: var(--vds-yellow); box-shadow: 0 5px 13px #1b36730d; }
+.vds360-panel .vds360-timeline-card.is-selected { background: #f0f6fe; border-color: #9dbfe7; box-shadow: 0 5px 18px #235d9d14; }
+.vds360-panel .vds360-source-link { color: var(--vds-blue); background: #edf4fd; border-color: #d6e4f7; }
+@media (max-width: 900px) {
+  .app-shell .vds-original-logo { max-width: 182px; }
+  .app-shell .vds-original-logo img { max-height: 124px; }
+}
