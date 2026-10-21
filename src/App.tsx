@@ -410,6 +410,21 @@ export default function App() {
           </div>
         </div>
         <main id="main-content" tabIndex={-1} className="main-content">
+          {route.section === "dashboard" && (
+            <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 20 }}>
+              <a
+                className="button button-primary"
+                href="https://vosfactures.fr/"
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="Accéder à VosFactures — nouvel onglet"
+                style={{ textDecoration: "none", minHeight: 44 }}
+              >
+                <ExternalLink size={18} aria-hidden="true" />
+                Accéder à VosFactures
+              </a>
+            </div>
+          )}
           {data.error && (
             <div className="error-banner" role="alert">
               <span>
