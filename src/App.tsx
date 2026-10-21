@@ -1,4 +1,5 @@
 import {
+  Fragment,
   lazy,
   Suspense,
   useCallback,
@@ -16,6 +17,7 @@ import {
   CircleHelp,
   ClipboardList,
   Database,
+  ExternalLink,
   FileCheck2,
   FileText,
   HardHat,
@@ -255,23 +257,38 @@ export default function App() {
         <div className="nav-caption">PILOTAGE</div>
         <nav>
           {navigation.map(({ id, label, icon: Icon }) => (
-            <button
-              key={id}
-              className={`nav-item ${route.section === id ? "active" : ""}`}
-              aria-current={route.section === id ? "page" : undefined}
-              onClick={() => navigate(id)}
-            >
-              <Icon size={19} strokeWidth={1.7} />
-              <span>{label}</span>
-              {id === "clients" && data.snapshot && (
-                <span className="nav-count">
-                  {data.snapshot.clients.length}
-                </span>
+            <Fragment key={id}>
+              <button
+                className={`nav-item ${route.section === id ? "active" : ""}`}
+                aria-current={route.section === id ? "page" : undefined}
+                onClick={() => navigate(id)}
+              >
+                <Icon size={19} strokeWidth={1.7} />
+                <span>{label}</span>
+                {id === "clients" && data.snapshot && (
+                  <span className="nav-count">
+                    {data.snapshot.clients.length}
+                  </span>
+                )}
+                {id === "sav" && data.snapshot && (
+                  <span className="nav-indicator" />
+                )}
+              </button>
+              {id === "factures" && (
+                <a
+                  className="nav-item"
+                  href="https://meert-val-gmail-com.vosfactures.fr"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ textDecoration: "none" }}
+                  aria-label="VosFactures — ouvrir la facturation dans un nouvel onglet"
+                  onClick={() => setMenuOpen(false)}
+                >
+                  <ExternalLink size={19} strokeWidth={1.7} />
+                  <span>VosFactures</span>
+                </a>
               )}
-              {id === "sav" && data.snapshot && (
-                <span className="nav-indicator" />
-              )}
-            </button>
+            </Fragment>
           ))}
         </nav>
         <div className="sidebar-bottom">
